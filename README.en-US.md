@@ -1,6 +1,15 @@
 # PowerTray
 
-[English](README.en-US.md) | [简体中文](README.zh-CN.md)
+**Language:** **English** | [简体中文](README.md)
+
+---
+
+<p align="center">
+  🌐 <strong>Language / 语言</strong><br>
+  <strong>English</strong> | <a href="README.md">简体中文</a>
+</p>
+
+---
 
 PowerTray is a vibe-driven modification and optimization based on [andyvorld/LGSTrayBattery](https://github.com/andyvorld/LGSTrayBattery). It keeps the tray battery-monitoring idea, HTTP compatibility, and HID++ direction from the original project, while changing the app into a native-only Logitech battery tray tool that does not depend on the Logitech G Hub backend.
 
@@ -70,7 +79,7 @@ Other Logitech HID++ devices may work if they expose supported battery features 
 
 ## Install
 
-Download `PowerTraySetup-1.0.0.exe` from the [latest release](https://github.com/shoukounan0227/PowerTray/releases/tag/v1.0.0) and run it. The installer includes all runtime dependencies for Windows x64.
+Download `PowerTraySetup-1.0.0.exe` from the [latest release](https://github.com/JumpTwiceShou/PowerTray/releases/tag/v1.0.0) and run it. The installer includes all runtime dependencies for Windows x64.
 
 During installation you can choose:
 
