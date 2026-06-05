@@ -1,124 +1,128 @@
 # PowerTray
 
-**语言:** [English](README.en-US.md) | **简体中文**
+**Language:** **English** | [简体中文](README.zh-CN.md)
 
 ---
 
 <p align="center">
   🌐 <strong>Language / 语言</strong><br>
-  <a href="README.en-US.md">English</a> | <strong>简体中文</strong>
+  <strong>English</strong> | <a href="README.zh-CN.md">简体中文</a>
 </p>
 
 ---
 
-PowerTray 是基于 [andyvorld/LGSTrayBattery](https://github.com/andyvorld/LGSTrayBattery) 进行 vibe 修改和优化的项目。它保留了原项目的托盘电量监控思路、HTTP 兼容接口和 HID++ 方向，但改造成不依赖 Logitech G Hub 后端的 native-only 罗技设备电量托盘工具。
+PowerTray is a vibe-driven modification and optimization based on [andyvorld/LGSTrayBattery](https://github.com/andyvorld/LGSTrayBattery). It keeps the tray battery-monitoring idea, HTTP compatibility, and HID++ direction from the original project, while changing the app into a native-only Logitech battery tray tool that does not depend on the Logitech G Hub backend.
 
-## 功能亮点
+## 中文概要
 
-- 通过 `hidapi` 直接读取 Logitech HID++ 电量。
-- 不依赖 `lghub_agent.exe` 或 `ws://localhost:9010`。
-- 可为已选择设备显示独立托盘图标，支持鼠标/耳机图标和数字电量图标。
-- 每个设备可单独设置低电量阈值、Windows 通知、托盘闪烁、别名和暂停提醒。
-- 支持静音时段，以及当前台存在全屏软件时暂停 Windows 通知。
-- 应用和安装器支持英文/简体中文，默认英文。
-- 提供单 EXE Windows x64 安装器，可选择是否开机自启。
-- 保留兼容 HTTP API：`/devices` 和 `/device/{id}` XML。
+PowerTray 是基于 [andyvorld/LGSTrayBattery](https://github.com/andyvorld/LGSTrayBattery) 进行 vibe 修改和优化的 native-only 罗技设备电量托盘工具。它不依赖 Logitech G Hub 后端，直接通过 HID++ 读取设备电量，支持托盘设备图标、低电量提醒、托盘闪烁、每设备别名和阈值、双语安装器，以及兼容的本地 HTTP API。
 
-## 截图和图标演示
+## Highlights
 
-以下部分图标和 API 演示图片复用了上游 `LGSTrayBattery` README 的素材，在此致谢。
+- Native Logitech HID++ battery reading through `hidapi`.
+- No dependency on `lghub_agent.exe` or `ws://localhost:9010`.
+- Tray icons for selected devices, including mouse/headset icons and numeric battery mode.
+- Per-device low battery alerts with independent threshold, Windows notification, tray blinking, alias, and pause controls.
+- Quiet hours and fullscreen-app notification suppression.
+- Bilingual UI and installer: English and Simplified Chinese.
+- Single-file Windows x64 installer with optional Start with Windows.
+- Compatible local HTTP API for `/devices` and `/device/{id}` XML.
 
-### 托盘电量指示
+## Screenshots And Icon Demos
 
-![托盘电量指示](https://user-images.githubusercontent.com/24492062/138280300-6966b6a4-ff6d-46e6-9698-d2c8d612eb11.png)
+Some icon and API demo images are reused from the upstream `LGSTrayBattery` README with thanks.
 
-托盘 tooltip 会显示电量百分比；如果设备支持，也会显示电压信息。
+### Tray Indicator
 
-### 多设备图标
+![Tray indicator](https://user-images.githubusercontent.com/24492062/138280300-6966b6a4-ff6d-46e6-9698-d2c8d612eb11.png)
 
-![多设备图标](Assets/multi_icon.png)
+Battery percentage and voltage, when supported, are shown from tray tooltips.
 
-被选择的设备可以显示为独立托盘图标。当至少选择一个设备图标时，PowerTray 会隐藏通用主托盘图标。
+### Multiple Device Icons
 
-### 数字电量图标
+![Multiple icons](Assets/multi_icon.png)
 
-![数字电量图标](Assets/numerical_icon.png)
+Selected devices can be shown as separate tray icons. When at least one device icon is selected, PowerTray hides the generic main tray icon.
 
-数字模式会直接在托盘图标中显示当前电量百分比。
+### Numeric Battery Icon
 
-### 响应式图标
+![Numeric icon](Assets/numerical_icon.png)
 
-![设备类型图标](https://user-images.githubusercontent.com/24492062/138284660-95949372-c59a-4569-9545-0cfe0506d1fb.png)
+Numeric mode displays the current battery percentage directly in the tray icon.
 
-图标会根据设备类型变化。目前 UI 资源支持鼠标、键盘和耳机风格图标。
+### Reactive Icons
 
-![浅色/深色主题图标](https://user-images.githubusercontent.com/24492062/138285048-ad229703-5c4e-430e-b107-c50eb341e46b.png)
+![Device type icons](https://user-images.githubusercontent.com/24492062/138284660-95949372-c59a-4569-9545-0cfe0506d1fb.png)
 
-图标会响应 Windows 浅色/深色主题。
+Icons change by device type. Current UI assets support mouse, keyboard, and headset style icons.
 
-![充电图标](Assets/charging_icon.png)
+![Theme reactive icons](https://user-images.githubusercontent.com/24492062/138285048-ad229703-5c4e-430e-b107-c50eb341e46b.png)
 
-当设备通过 HID++ 上报充电状态时，托盘图标会反映充电状态。
+Icons react to the Windows light/dark theme.
 
-### HTTP 服务演示
+![Charging icon](Assets/charging_icon.png)
 
-![HTTP 设备列表](Assets/server_index.png)
+Charging status is reflected when the device reports it through HID++.
 
-本地 HTTP 服务提供简单的设备列表和 XML 电量接口。
+### HTTP Server Demo
 
-![HTTP XML 结果](https://user-images.githubusercontent.com/24492062/138281030-f40ba805-69bf-48ac-a126-6f58f9ca7828.png)
+![HTTP server index](Assets/server_index.png)
 
-## 当前设备覆盖
+The local HTTP server exposes a simple device list and XML battery endpoint.
 
-native 后端已验证：
+![HTTP XML result](https://user-images.githubusercontent.com/24492062/138281030-f40ba805-69bf-48ac-a126-6f58f9ca7828.png)
+
+## Current Device Coverage
+
+The native backend has been validated on:
 
 - `PRO X2 SUPERSTRIKE Wireless Mouse`
 - `PRO X 2 Lightspeed Gaming Headset`
 
-其他 Logitech HID++ 设备如果通过兼容 HID++ endpoint 暴露受支持的电量 feature（`0x1000`、`0x1001`、`0x1004`），也可能可用。
+Other Logitech HID++ devices may work if they expose supported battery features (`0x1000`, `0x1001`, `0x1004`) through compatible HID++ endpoints.
 
-## 安装
+## Install
 
-从 [latest release](https://github.com/JumpTwiceShou/PowerTray/releases/tag/v1.0.0) 下载 `PowerTraySetup-1.0.0.exe` 并运行。安装器自带 Windows x64 所需运行时依赖。
+Download `PowerTraySetup-1.0.0.exe` from the [latest release](https://github.com/JumpTwiceShou/PowerTray/releases/tag/v1.0.0) and run it. The installer includes all runtime dependencies for Windows x64.
 
-安装时可以选择：
+During installation you can choose:
 
-- 初始语言：English 或简体中文。
-- 安装位置。
-- 是否开机自启。
-- 安装完成后是否立即启动 PowerTray。
+- English or Simplified Chinese initial language.
+- Install location.
+- Whether PowerTray starts with Windows.
+- Whether PowerTray launches after installation.
 
-用户设置保存于：
+User settings are stored at:
 
 ```text
 %APPDATA%\PowerTray\settings.json
 ```
 
-## 设置
+## Settings
 
-设置窗口包含：
+The settings window includes:
 
-- 常规：语言、开机自启、数字电量图标。
-- 提醒：全局低电量默认值、静音时段、全屏软件前台时暂停 Windows 通知。
-- 设备：每设备别名、低电量阈值、通知、托盘闪烁、暂停提醒、测试通知、测试闪烁。
-- 诊断：G Hub 进程状态、`localhost:9010` 可达性、设备更新时间、提醒配置摘要和诊断导出。
+- General: language, Start with Windows, numeric battery icon.
+- Alerts: global low battery defaults, quiet hours, fullscreen notification suppression.
+- Devices: per-device alias, low battery threshold, notification, tray blinking, alert pause, test notification, test blink.
+- Diagnostics: G Hub process status, `localhost:9010` reachability, device update time, alert settings summary, and diagnostic export.
 
-设备别名只影响界面和通知。HTTP XML API 仍输出罗技原始设备名。
+Device aliases only affect the UI and notifications. The HTTP XML API keeps the original Logitech device name.
 
 ## HTTP API
 
-本地 HTTP 服务默认地址：
+The local HTTP server defaults to:
 
 ```text
 http://localhost:12321/
 ```
 
-接口：
+Endpoints:
 
-- `GET /devices`：列出可用设备和链接。
-- `GET /device/{deviceId}`：返回 XML 电量数据。
+- `GET /devices`: lists available devices and links.
+- `GET /device/{deviceId}`: returns XML battery data.
 
-XML 示例：
+Example XML:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -134,36 +138,36 @@ XML 示例：
 </xml>
 ```
 
-Native 模式没有 G Hub 的 mileage 数据，因此 `mileage` 返回 `-1.00`。
+Native mode does not have G Hub mileage data, so `mileage` is reported as `-1.00`.
 
-## 构建
+## Build
 
-使用本机 bundled SDK：
+Use the bundled local SDK on this machine:
 
 ```powershell
 F:\logi\.dotnet-sdk\dotnet.exe build PowerTray.sln -c Debug
 powershell -ExecutionPolicy Bypass -File .\build-installer.ps1
 ```
 
-安装器输出：
+The installer is generated at:
 
 ```text
 bin\Release\installer\PowerTraySetup.exe
 ```
 
-生成的 `bin`、`obj`、publish 输出和安装器 payload zip 不应提交到仓库。
+Generated `bin`, `obj`, publish output, and installer payload zip files are not intended to be committed.
 
-## 许可证
+## License
 
-PowerTray 使用 GPL-3.0 许可证。见 [LICENSE](LICENSE)。
+PowerTray is licensed under GPL-3.0. See [LICENSE](LICENSE).
 
-## 致谢
+## Acknowledgements
 
-感谢：
+Thanks to:
 
-- [andyvorld/LGSTrayBattery](https://github.com/andyvorld/LGSTrayBattery)，本项目参考和修改优化的基础项目。
-- [andyvorld/LGSTrayBattery_GHUB](https://github.com/andyvorld/LGSTrayBattery_GHUB)，上游项目引用的相关项目。
-- [Solaar](https://github.com/pwr-Solaar/Solaar)，上游项目致谢其 HID++ 协议资料和逆向参考。
-- [XB1ControllerBatteryIndicator](https://github.com/NiyaShy/XB1ControllerBatteryIndicator)，上游项目致谢其图标思路和基础。
-- [The Noun Project](https://thenounproject.com/) 以及上游项目致谢的图标作者 projecthayat、HideMaru、Peter Lakenbrink。
-- [hidapi](https://github.com/libusb/hidapi)，native 后端使用的 HID 库。
+- [andyvorld/LGSTrayBattery](https://github.com/andyvorld/LGSTrayBattery), the project this work is based on.
+- [andyvorld/LGSTrayBattery_GHUB](https://github.com/andyvorld/LGSTrayBattery_GHUB), referenced by the upstream project.
+- [Solaar](https://github.com/pwr-Solaar/Solaar), for HID++ protocol knowledge and reverse-engineering references acknowledged by the upstream project.
+- [XB1ControllerBatteryIndicator](https://github.com/NiyaShy/XB1ControllerBatteryIndicator), for the icon idea and base acknowledged by the upstream project.
+- [The Noun Project](https://thenounproject.com/), and the icon authors acknowledged by the upstream project: projecthayat, HideMaru, and Peter Lakenbrink.
+- [hidapi](https://github.com/libusb/hidapi), for the HID library used by the native backend.
