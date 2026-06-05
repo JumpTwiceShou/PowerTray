@@ -1,0 +1,420 @@
+using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
+using LGSTrayCore;
+using System;
+using System.Collections.ObjectModel;
+using System.Collections.Specialized;
+using System.ComponentModel;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using Microsoft.Win32;
+
+namespace LGSTrayUI;
+
+public sealed partial class SettingsViewModel : ObservableObject
+{
+    private readonly UserSettingsWrapper _settings;
+    private readonly LogiDeviceCollection _deviceCollection;
+    private readonly NotificationService _notifications;
+    private readonly AlertManager _alertManager;
+    private readonly SystemStateService _systemState;
+
+    public LocalizationService Loc { get; }
+    public ObservableCollection<DeviceSettingsItemViewModel> DeviceItems { get; } = [];
+
+    [ObservableProperty]
+    private string _gHubStatus = string.Empty;
+
+    [ObservableProperty]
+    private string _port9010Status = string.Empty;
+
+    [ObservableProperty]
+    private string _diagnosticSummary = string.Empty;
+
+    public SettingsViewModel(
+        UserSettingsWrapper settings,
+        ILogiDeviceCollection deviceCollection,
+        LocalizationService loc,
+        NotificationService notifications,
+        AlertManager alertManager,
+        SystemStateService systemState
+    )
+    {
+        _settings = settings;
+        _deviceCollection = (LogiDeviceCollection)deviceCollection;
+        _notifications = notifications;
+        _alertManager = alertManager;
+        _systemState = systemState;
+        Loc = loc;
+
+        _deviceCollection.Devices.CollectionChanged += OnDevicesChanged;
+        _settings.DeviceSettingsChanged += OnDeviceSettingsChanged;
+        _settings.PropertyChanged += OnSettingsPropertyChanged;
+        Loc.PropertyChanged += (_, _) => RefreshBindings();
+        RefreshDeviceItems();
+        _ = RefreshDiagnosticsAsync();
+    }
+
+    public string Language
+    {
+        get => _settings.Language;
+        set
+        {
+            _settings.Language = value;
+            RefreshBindings();
+        }
+    }
+
+    public bool AutoStart
+    {
+        get => _settings.AutoStart;
+        set
+        {
+            _settings.AutoStart = value;
+            RefreshBindings();
+        }
+    }
+
+    public bool NumericDisplay
+    {
+        get => _settings.NumericDisplay;
+        set
+        {
+            _settings.NumericDisplay = value;
+            RefreshBindings();
+        }
+    }
+
+    public int DefaultThresholdPercent
+    {
+        get => _settings.DefaultThresholdPercent;
+        set
+        {
+            if (_settings.DefaultThresholdPercent == value)
+            {
+                return;
+            }
+
+            _settings.DefaultThresholdPercent = value;
+            RefreshBindings();
+        }
+    }
+
+    public string DefaultThresholdPercentText => $"{DefaultThresholdPercent}%";
+
+    public bool DefaultWindowsNotification
+    {
+        get => _settings.DefaultWindowsNotification;
+        set
+        {
+            _settings.DefaultWindowsNotification = value;
+            RefreshBindings();
+        }
+    }
+
+    public bool DefaultTrayBlink
+    {
+        get => _settings.DefaultTrayBlink;
+        set
+        {
+            _settings.DefaultTrayBlink = value;
+            RefreshBindings();
+        }
+    }
+
+    public bool QuietHoursEnabled
+    {
+        get => _settings.QuietHoursEnabled;
+        set
+        {
+            _settings.QuietHoursEnabled = value;
+            RefreshBindings();
+        }
+    }
+
+    public string QuietHoursStart
+    {
+        get => _settings.QuietHoursStart;
+        set
+        {
+            _settings.QuietHoursStart = value;
+            RefreshBindings();
+        }
+    }
+
+    public string QuietHoursEnd
+    {
+        get => _settings.QuietHoursEnd;
+        set
+        {
+            _settings.QuietHoursEnd = value;
+            RefreshBindings();
+        }
+    }
+
+    public bool SuppressNotificationsWhenFullscreen
+    {
+        get => _settings.SuppressNotificationsWhenFullscreen;
+        set
+        {
+            _settings.SuppressNotificationsWhenFullscreen = value;
+            RefreshBindings();
+        }
+    }
+
+    [RelayCommand]
+    private async Task RefreshDiagnosticsAsync()
+    {
+        bool ghub = _systemState.IsGHubRunning();
+        bool port = await _systemState.IsPort9010ReachableAsync();
+        GHubStatus = ghub ? Loc["Yes"] : Loc["No"];
+        Port9010Status = port ? Loc["Yes"] : Loc["No"];
+        DiagnosticSummary = BuildDiagnostics();
+    }
+
+    [RelayCommand]
+    private async Task ExportDiagnosticsAsync()
+    {
+        await RefreshDiagnosticsAsync();
+        SaveFileDialog dialog = new()
+        {
+            Filter = "Text files (*.txt)|*.txt|All files (*.*)|*.*",
+            FileName = $"PowerTray-diagnostics-{DateTime.Now:yyyyMMdd-HHmmss}.txt",
+        };
+
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        try
+        {
+            File.WriteAllText(dialog.FileName, DiagnosticSummary, Encoding.UTF8);
+            _notifications.Show(Loc["DiagnosticsExported"], dialog.FileName);
+        }
+        catch (Exception ex)
+        {
+            _notifications.Show(Loc["DiagnosticsExportFailed"], ex.Message);
+        }
+    }
+
+    private void OnDevicesChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        RefreshDeviceItems();
+    }
+
+    private void OnDeviceSettingsChanged(string deviceId)
+    {
+        bool refreshDiagnostics = true;
+        if (string.IsNullOrWhiteSpace(deviceId))
+        {
+            foreach (DeviceSettingsItemViewModel item in DeviceItems)
+            {
+                item.Refresh();
+            }
+        }
+        else
+        {
+            DeviceSettingsItemViewModel? item = DeviceItems.FirstOrDefault(x => x.DeviceId == deviceId);
+            item?.Refresh();
+            refreshDiagnostics = item is not { IsEditingThreshold: true };
+        }
+
+        if (refreshDiagnostics)
+        {
+            DiagnosticSummary = BuildDiagnostics();
+        }
+    }
+
+    private void OnSettingsPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(UserSettingsWrapper.Snapshot))
+        {
+            DiagnosticSummary = BuildDiagnostics();
+            return;
+        }
+
+        RefreshBindings();
+    }
+
+    private void RefreshDeviceItems()
+    {
+        DeviceItems.Clear();
+        foreach (LogiDeviceViewModel device in _deviceCollection.Devices.Where(x => x.DeviceName != LogiDevice.NOT_FOUND))
+        {
+            DeviceItems.Add(new(device, _settings, Loc, _notifications, _alertManager));
+        }
+        DiagnosticSummary = BuildDiagnostics();
+    }
+
+    private void RefreshBindings()
+    {
+        OnPropertyChanged(string.Empty);
+        foreach (DeviceSettingsItemViewModel item in DeviceItems)
+        {
+            item.Refresh();
+        }
+        DiagnosticSummary = BuildDiagnostics();
+    }
+
+    private string BuildDiagnostics()
+    {
+        StringBuilder sb = new();
+        sb.AppendLine("PowerTray Diagnostics");
+        sb.AppendLine($"Generated: {DateTimeOffset.Now:o}");
+        sb.AppendLine($"{Loc["CurrentLanguage"]}: {Language}");
+        sb.AppendLine($"{Loc["GHubStatus"]}: {GHubStatus}");
+        sb.AppendLine($"{Loc["Port9010Status"]}: {Port9010Status}");
+        sb.AppendLine();
+        sb.AppendLine(Loc["AlertSummary"]);
+        sb.AppendLine(_settings.ExportSettingsSummary());
+        sb.AppendLine();
+        sb.AppendLine("Devices:");
+        foreach (LogiDeviceViewModel device in _deviceCollection.Devices)
+        {
+            sb.AppendLine($"{device.DeviceId} | {device.DeviceName} | {device.BatteryPercentage:0.00}% | {device.PowerSupplyStatus} | {device.LastUpdate:o}");
+        }
+        return sb.ToString();
+    }
+}
+
+public sealed partial class DeviceSettingsItemViewModel : ObservableObject
+{
+    private readonly LogiDeviceViewModel _device;
+    private readonly UserSettingsWrapper _settings;
+    private readonly NotificationService _notifications;
+    private readonly AlertManager _alertManager;
+    private bool _isEditingThreshold;
+
+    public LocalizationService Loc { get; }
+    public string DeviceId => _device.DeviceId;
+    public string OriginalName => _device.DeviceName;
+    public string DisplayName => _device.DisplayName;
+    public string BatteryText => $"{_device.BatteryPercentage:0}%";
+    public string LastUpdateText => _device.LastUpdate == DateTimeOffset.MinValue ? Loc["Never"] : _device.LastUpdate.ToString("g");
+    public bool IsPaused => _settings.GetPauseUntil(DeviceId) is { } pauseUntil && pauseUntil > DateTimeOffset.Now;
+    public string PauseText => _settings.GetPauseUntil(DeviceId) is { } pauseUntil && pauseUntil > DateTimeOffset.Now
+        ? pauseUntil.ToLocalTime().ToString("g")
+        : "-";
+    public bool IsEditingThreshold => _isEditingThreshold;
+
+    public DeviceSettingsItemViewModel(
+        LogiDeviceViewModel device,
+        UserSettingsWrapper settings,
+        LocalizationService loc,
+        NotificationService notifications,
+        AlertManager alertManager
+    )
+    {
+        _device = device;
+        _settings = settings;
+        Loc = loc;
+        _notifications = notifications;
+        _alertManager = alertManager;
+        _device.PropertyChanged += (_, _) => Refresh();
+    }
+
+    public string Alias
+    {
+        get => _settings.GetDeviceSettings(DeviceId, OriginalName).Alias;
+        set
+        {
+            _settings.SetDeviceAlias(DeviceId, value);
+            Refresh();
+        }
+    }
+
+    public int ThresholdPercent
+    {
+        get => _settings.GetThreshold(DeviceId);
+        set
+        {
+            int threshold = Math.Clamp(value, 1, 100);
+            if (ThresholdPercent == threshold)
+            {
+                return;
+            }
+
+            _isEditingThreshold = true;
+            try
+            {
+                _settings.SetDeviceThreshold(DeviceId, threshold);
+            }
+            finally
+            {
+                _isEditingThreshold = false;
+            }
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(ThresholdPercentText));
+        }
+    }
+
+    public string ThresholdPercentText => $"{ThresholdPercent}%";
+
+    public bool WindowsNotification
+    {
+        get => _settings.GetWindowsNotificationEnabled(DeviceId);
+        set
+        {
+            _settings.SetDeviceWindowsNotification(DeviceId, value);
+            Refresh();
+        }
+    }
+
+    public bool TrayBlink
+    {
+        get => _settings.GetTrayBlinkEnabled(DeviceId);
+        set
+        {
+            _settings.SetDeviceTrayBlink(DeviceId, value);
+            Refresh();
+        }
+    }
+
+    [RelayCommand]
+    private void TestNotification()
+    {
+        _notifications.ShowTest(_device);
+    }
+
+    [RelayCommand]
+    private void TestBlink()
+    {
+        _alertManager.TestBlink(_device);
+    }
+
+    [RelayCommand]
+    private void RestoreDefaults()
+    {
+        _settings.RestoreDeviceDefaults(DeviceId);
+        Refresh();
+    }
+
+    [RelayCommand]
+    private void PauseOneHour()
+    {
+        _settings.SetDevicePauseUntil(DeviceId, DateTimeOffset.Now.AddHours(1));
+        Refresh();
+    }
+
+    [RelayCommand]
+    private void PauseToday()
+    {
+        _settings.SetDevicePauseUntil(DeviceId, DateTimeOffset.Now.Date.AddDays(1));
+        Refresh();
+    }
+
+    [RelayCommand]
+    private void ResumeAlerts()
+    {
+        _settings.SetDevicePauseUntil(DeviceId, null);
+        Refresh();
+    }
+
+    public void Refresh()
+    {
+        OnPropertyChanged(string.Empty);
+    }
+}
