@@ -7,6 +7,7 @@ public sealed class PowerTrayUserSettings
 {
     public int SchemaVersion { get; set; } = 1;
     public string Language { get; set; } = "en-US";
+    public string ThemeMode { get; set; } = "system";
     public bool NumericDisplay { get; set; }
     public bool AutoStart { get; set; }
     public List<string> SelectedDevices { get; set; } = [];

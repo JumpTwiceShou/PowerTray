@@ -24,6 +24,7 @@ namespace LGSTrayHID
 
         private BatteryUpdateReturn lastBatteryReturn;
         private DateTimeOffset lastUpdate = DateTimeOffset.MinValue;
+        private bool _offlineSignalled;
 
         private readonly HidppDevices _parent;
         public HidppDevices Parent => _parent;
@@ -208,12 +209,25 @@ namespace LGSTrayHID
                 _ => null
             };
 
+            BatteryUpdateReturn? initialBattery = null;
+            if (_getBatteryAsync != null)
+            {
+                initialBattery = await ReadBatteryAsync();
+                if (initialBattery == null)
+                {
+                    return;
+                }
+            }
+
             HidppManagerContext.Instance.SignalDeviceEvent(
                 IPCMessageType.INIT,
                 new InitMessage(Identifier, DeviceName, _getBatteryAsync != null, (DeviceType)DeviceType)
             );
 
-            await UpdateBattery(true);
+            if (initialBattery.HasValue)
+            {
+                SignalBatteryUpdate(initialBattery.Value, true);
+            }
 
             _ = Task.Run(async () =>
             {
@@ -243,12 +257,35 @@ namespace LGSTrayHID
             if (Parent.Disposed) { return; }
             if (_getBatteryAsync == null) { return; }
 
-            var ret = await _getBatteryAsync.Invoke(this);
+            if (!await Parent.Ping20(_deviceIdx, 150, false))
+            {
+                SignalOffline();
+                return;
+            }
 
-            if (ret == null) { return; }
+            var ret = await ReadBatteryAsync();
 
-            var batStatus = ret.Value;
+            if (ret == null)
+            {
+                SignalOffline();
+                return;
+            }
+
+            SignalBatteryUpdate(ret.Value, forceIpcUpdate);
+        }
+
+        private async Task<BatteryUpdateReturn?> ReadBatteryAsync()
+        {
+            if (Parent.Disposed) { return null; }
+            if (_getBatteryAsync == null) { return null; }
+
+            return await _getBatteryAsync.Invoke(this);
+        }
+
+        private void SignalBatteryUpdate(BatteryUpdateReturn batStatus, bool forceIpcUpdate)
+        {
             lastUpdate = DateTimeOffset.Now;
+            _offlineSignalled = false;
 
             if (!forceIpcUpdate && batStatus == lastBatteryReturn)
             {
@@ -260,6 +297,20 @@ namespace LGSTrayHID
             HidppManagerContext.Instance.SignalDeviceEvent(
                 IPCMessageType.UPDATE,
                 new UpdateMessage(Identifier, batStatus.batteryPercentage, batStatus.status, batStatus.batteryMVolt, lastUpdate)
+            );
+        }
+
+        private void SignalOffline()
+        {
+            if (_offlineSignalled)
+            {
+                return;
+            }
+
+            _offlineSignalled = true;
+            HidppManagerContext.Instance.SignalDeviceEvent(
+                IPCMessageType.OFFLINE,
+                new DeviceOfflineMessage(Identifier)
             );
         }
     }

@@ -7,6 +7,7 @@ using System.Collections.Specialized;
 using System.ComponentModel;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
 using Microsoft.Win32;
@@ -20,6 +21,9 @@ public sealed partial class SettingsViewModel : ObservableObject
     private readonly NotificationService _notifications;
     private readonly AlertManager _alertManager;
     private readonly SystemStateService _systemState;
+    private readonly UpdateService _updateService;
+    private bool _lastGHubRunning;
+    private bool _lastPort9010Reachable;
 
     public LocalizationService Loc { get; }
     public ObservableCollection<DeviceSettingsItemViewModel> DeviceItems { get; } = [];
@@ -33,13 +37,16 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty]
     private string _diagnosticSummary = string.Empty;
 
+    public string CurrentVersion => GetCurrentVersion();
+
     public SettingsViewModel(
         UserSettingsWrapper settings,
         ILogiDeviceCollection deviceCollection,
         LocalizationService loc,
         NotificationService notifications,
         AlertManager alertManager,
-        SystemStateService systemState
+        SystemStateService systemState,
+        UpdateService updateService
     )
     {
         _settings = settings;
@@ -47,6 +54,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         _notifications = notifications;
         _alertManager = alertManager;
         _systemState = systemState;
+        _updateService = updateService;
         Loc = loc;
 
         _deviceCollection.Devices.CollectionChanged += OnDevicesChanged;
@@ -63,6 +71,16 @@ public sealed partial class SettingsViewModel : ObservableObject
         set
         {
             _settings.Language = value;
+            RefreshBindings();
+        }
+    }
+
+    public string ThemeMode
+    {
+        get => _settings.ThemeMode;
+        set
+        {
+            _settings.ThemeMode = value;
             RefreshBindings();
         }
     }
@@ -167,10 +185,9 @@ public sealed partial class SettingsViewModel : ObservableObject
     [RelayCommand]
     private async Task RefreshDiagnosticsAsync()
     {
-        bool ghub = _systemState.IsGHubRunning();
-        bool port = await _systemState.IsPort9010ReachableAsync();
-        GHubStatus = ghub ? Loc["Yes"] : Loc["No"];
-        Port9010Status = port ? Loc["Yes"] : Loc["No"];
+        _lastGHubRunning = _systemState.IsGHubRunning();
+        _lastPort9010Reachable = await _systemState.IsPort9010ReachableAsync();
+        RefreshStatusText();
         DiagnosticSummary = BuildDiagnostics();
     }
 
@@ -198,6 +215,12 @@ public sealed partial class SettingsViewModel : ObservableObject
         {
             _notifications.Show(Loc["DiagnosticsExportFailed"], ex.Message);
         }
+    }
+
+    [RelayCommand]
+    private async Task CheckForUpdatesAsync()
+    {
+        await _updateService.CheckForUpdatesAsync();
     }
 
     private void OnDevicesChanged(object? sender, NotifyCollectionChangedEventArgs e)
@@ -251,6 +274,7 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     private void RefreshBindings()
     {
+        RefreshStatusText();
         OnPropertyChanged(string.Empty);
         foreach (DeviceSettingsItemViewModel item in DeviceItems)
         {
@@ -259,12 +283,20 @@ public sealed partial class SettingsViewModel : ObservableObject
         DiagnosticSummary = BuildDiagnostics();
     }
 
+    private void RefreshStatusText()
+    {
+        GHubStatus = _lastGHubRunning ? Loc["Yes"] : Loc["No"];
+        Port9010Status = _lastPort9010Reachable ? Loc["Yes"] : Loc["No"];
+    }
+
     private string BuildDiagnostics()
     {
         StringBuilder sb = new();
         sb.AppendLine("PowerTray Diagnostics");
+        sb.AppendLine($"{Loc["ReleaseVersion"]}: {CurrentVersion}");
         sb.AppendLine($"Generated: {DateTimeOffset.Now:o}");
         sb.AppendLine($"{Loc["CurrentLanguage"]}: {Language}");
+        sb.AppendLine($"{Loc["Theme"]}: {ThemeMode}");
         sb.AppendLine($"{Loc["GHubStatus"]}: {GHubStatus}");
         sb.AppendLine($"{Loc["Port9010Status"]}: {Port9010Status}");
         sb.AppendLine();
@@ -278,6 +310,16 @@ public sealed partial class SettingsViewModel : ObservableObject
         }
         return sb.ToString();
     }
+
+    private static string GetCurrentVersion()
+    {
+        string? version = Assembly.GetEntryAssembly()
+            ?.GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion
+            ?.Split('+')[0];
+
+        return string.IsNullOrWhiteSpace(version) ? "Missing" : version;
+    }
 }
 
 public sealed partial class DeviceSettingsItemViewModel : ObservableObject
@@ -290,15 +332,43 @@ public sealed partial class DeviceSettingsItemViewModel : ObservableObject
 
     public LocalizationService Loc { get; }
     public string DeviceId => _device.DeviceId;
-    public string OriginalName => _device.DeviceName;
-    public string DisplayName => _device.DisplayName;
-    public string BatteryText => $"{_device.BatteryPercentage:0}%";
-    public string LastUpdateText => _device.LastUpdate == DateTimeOffset.MinValue ? Loc["Never"] : _device.LastUpdate.ToString("g");
+    public string OriginalName => _device.OriginalNameDisplay;
+    public string DisplayName => _device.BaseDisplayName;
+    public bool ShowOriginalName => _device.ShowOriginalName;
+    public bool IsOnline => _device.IsOnline;
+    public bool IsOffline => !_device.IsOnline;
+    public bool ShowBatteryMetadata => _device.IsOnline && _device.BatteryPercentage >= 0;
+    public string BatteryText => ShowBatteryMetadata ? $"{_device.BatteryPercentage:0}%" : "-";
+    public string LastUpdateText => ShowBatteryMetadata && _device.LastUpdate != DateTimeOffset.MinValue ? _device.LastUpdate.ToString("g") : "-";
     public bool IsPaused => _settings.GetPauseUntil(DeviceId) is { } pauseUntil && pauseUntil > DateTimeOffset.Now;
     public string PauseText => _settings.GetPauseUntil(DeviceId) is { } pauseUntil && pauseUntil > DateTimeOffset.Now
         ? pauseUntil.ToLocalTime().ToString("g")
         : "-";
     public bool IsEditingThreshold => _isEditingThreshold;
+    public bool FollowGlobalThreshold
+    {
+        get => !_settings.HasDeviceThreshold(DeviceId);
+        set
+        {
+            if (FollowGlobalThreshold == value)
+            {
+                return;
+            }
+
+            if (value)
+            {
+                _settings.SetDeviceThreshold(DeviceId, null);
+            }
+            else
+            {
+                _settings.SetDeviceThreshold(DeviceId, _settings.DefaultThresholdPercent);
+            }
+
+            Refresh();
+        }
+    }
+
+    public bool IsCustomThreshold => !FollowGlobalThreshold;
 
     public DeviceSettingsItemViewModel(
         LogiDeviceViewModel device,
@@ -348,6 +418,8 @@ public sealed partial class DeviceSettingsItemViewModel : ObservableObject
             }
             OnPropertyChanged();
             OnPropertyChanged(nameof(ThresholdPercentText));
+            OnPropertyChanged(nameof(FollowGlobalThreshold));
+            OnPropertyChanged(nameof(IsCustomThreshold));
         }
     }
 

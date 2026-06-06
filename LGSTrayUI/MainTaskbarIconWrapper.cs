@@ -30,6 +30,7 @@ public class MainTaskbarIconWrapper : IDisposable
         _alertState.Changed += OnAlertStateChanged;
         _notificationService.NotificationRequested += OnNotificationRequested;
         LogiDeviceIcon.RefCountChanged += OnDeviceIconRefCountChanged;
+        CheckTheme.StaticPropertyChanged += OnThemeChanged;
         _blinkTimer = new DispatcherTimer
         {
             Interval = TimeSpan.FromMilliseconds(500),
@@ -62,6 +63,7 @@ public class MainTaskbarIconWrapper : IDisposable
             _alertState.Changed -= OnAlertStateChanged;
             _notificationService.NotificationRequested -= OnNotificationRequested;
             LogiDeviceIcon.RefCountChanged -= OnDeviceIconRefCountChanged;
+            CheckTheme.StaticPropertyChanged -= OnThemeChanged;
             _taskbarIcon?.Dispose();
             _taskbarIcon = null;
         }
@@ -106,6 +108,14 @@ public class MainTaskbarIconWrapper : IDisposable
         }
 
         DrawMainIcon();
+    }
+
+    private void OnThemeChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(CheckTheme.TaskbarLightTheme) or nameof(CheckTheme.TaskbarThemeSuffix))
+        {
+            Application.Current.Dispatcher.BeginInvoke(DrawMainIcon);
+        }
     }
 
     private void DrawMainIcon()

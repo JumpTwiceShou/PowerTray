@@ -17,12 +17,12 @@ namespace LGSTrayUI
         [return: MarshalAs(UnmanagedType.Bool)]
         private static partial bool DestroyIcon(IntPtr handle);
 
-        private static Bitmap Mouse => CheckTheme.LightTheme ? Resources.Mouse : Resources.Mouse_dark;
-        private static Bitmap Keyboard => CheckTheme.LightTheme ? Resources.Keyboard : Resources.Keyboard_dark;
-        private static Bitmap Headset => CheckTheme.LightTheme ? Resources.Headset : Resources.Headset_dark;
-        private static Bitmap Battery => CheckTheme.LightTheme ? Resources.Battery : Resources.Battery_dark;
-        private static Bitmap Missing => CheckTheme.LightTheme ? Resources.Missing : Resources.Missing_dark;
-        private static Bitmap Charging => CheckTheme.LightTheme ? Resources.Charging : Resources.Charging_dark;
+        private static Bitmap Mouse => CheckTheme.TaskbarLightTheme ? Resources.Mouse : Resources.Mouse_dark;
+        private static Bitmap Keyboard => CheckTheme.TaskbarLightTheme ? Resources.Keyboard : Resources.Keyboard_dark;
+        private static Bitmap Headset => CheckTheme.TaskbarLightTheme ? Resources.Headset : Resources.Headset_dark;
+        private static Bitmap Battery => CheckTheme.TaskbarLightTheme ? Resources.Battery : Resources.Battery_dark;
+        private static Bitmap Missing => CheckTheme.TaskbarLightTheme ? Resources.Missing : Resources.Missing_dark;
+        private static Bitmap Charging => CheckTheme.TaskbarLightTheme ? Resources.Charging : Resources.Charging_dark;
 
         private static int ImageSize;
 
@@ -54,7 +54,7 @@ namespace LGSTrayUI
 
         private static Color GetDeviceColor(LogiDevice device) => device.DeviceType switch
         {
-            _ => CheckTheme.LightTheme ? Color.FromArgb(0x11, 0x11, 0x11) : Color.FromArgb(0xEE, 0xEE, 0xEE)
+            _ => CheckTheme.TaskbarLightTheme ? Color.FromArgb(0x11, 0x11, 0x11) : Color.FromArgb(0xEE, 0xEE, 0xEE)
 
             //return device.DeviceType switch
             //{

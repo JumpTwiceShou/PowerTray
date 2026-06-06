@@ -17,11 +17,12 @@
                 <Border 
                     BorderThickness="1"
                     CornerRadius="5"
-                    Background="{Binding Path=(local:CheckTheme.LightTheme), Converter={StaticResource ThemeBrushConverter}, Mode=OneWay, UpdateSourceTrigger=PropertyChanged}"
+                    BorderBrush="{DynamicResource BorderBrushSoft}"
+                    Background="{DynamicResource TooltipBackgroundBrush}"
                     >
                     <StackPanel Margin="5">
                         <TextBlock Text="{Binding Path=DisplayToolTipString}" 
-                                   Foreground="{Binding Path=(local:CheckTheme.LightTheme), Converter={StaticResource ThemeBrushConverter}, ConverterParameter=Text}" 
+                                   Foreground="{DynamicResource TextBrush}"
                         />
                     </StackPanel>
                 </Border>

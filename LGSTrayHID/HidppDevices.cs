@@ -31,6 +31,7 @@ namespace LGSTrayHID
         private CancellationTokenSource? _readCts;
         private byte _pingPayload = 0x55;
         private byte _centurionSwId = 0x01;
+        private readonly HashSet<string> _offlineSignalledDeviceIds = [];
         private int _disposeCount;
         private int _started;
 
@@ -283,13 +284,26 @@ namespace LGSTrayHID
             name = KnownLogitechDevices.GetDisplayName(name, DeviceType.Headset, _shortEndpoint.ProductId);
             string serial = await ReadCenturionSerialAsync(bridgeIndex, headsetFeatures) ?? _shortEndpoint.ProductId.ToString("X4");
             string deviceId = $"centurion-{serial}";
+            bool hasBattery = headsetFeatures.ContainsKey(0x0104);
+            UpdateMessage? initialBattery = null;
+            if (hasBattery)
+            {
+                initialBattery = await CreateCenturionBatteryUpdateAsync(deviceId, bridgeIndex, headsetFeatures);
+                if (initialBattery == null)
+                {
+                    return true;
+                }
+            }
 
             HidppManagerContext.Instance.SignalDeviceEvent(
                 IPCMessageType.INIT,
-                new InitMessage(deviceId, name, headsetFeatures.ContainsKey(0x0104), DeviceType.Headset)
+                new InitMessage(deviceId, name, hasBattery, DeviceType.Headset)
             );
 
-            await UpdateCenturionBatteryAsync(deviceId, bridgeIndex, headsetFeatures);
+            if (initialBattery != null)
+            {
+                HidppManagerContext.Instance.SignalDeviceEvent(IPCMessageType.UPDATE, initialBattery);
+            }
 
             _ = Task.Run(async () =>
             {
@@ -459,15 +473,48 @@ namespace LGSTrayHID
 
         private async Task UpdateCenturionBatteryAsync(string deviceId, byte bridgeIndex, IReadOnlyDictionary<ushort, byte> features)
         {
+            UpdateMessage? update = await CreateCenturionBatteryUpdateAsync(deviceId, bridgeIndex, features);
+            if (update != null)
+            {
+                lock (_offlineSignalledDeviceIds)
+                {
+                    _offlineSignalledDeviceIds.Remove(deviceId);
+                }
+
+                HidppManagerContext.Instance.SignalDeviceEvent(IPCMessageType.UPDATE, update);
+                return;
+            }
+
+            SignalOffline(deviceId);
+        }
+
+        private void SignalOffline(string deviceId)
+        {
+            lock (_offlineSignalledDeviceIds)
+            {
+                if (!_offlineSignalledDeviceIds.Add(deviceId))
+                {
+                    return;
+                }
+            }
+
+            HidppManagerContext.Instance.SignalDeviceEvent(
+                IPCMessageType.OFFLINE,
+                new DeviceOfflineMessage(deviceId)
+            );
+        }
+
+        private async Task<UpdateMessage?> CreateCenturionBatteryUpdateAsync(string deviceId, byte bridgeIndex, IReadOnlyDictionary<ushort, byte> features)
+        {
             if (!features.TryGetValue(0x0104, out byte batteryIndex))
             {
-                return;
+                return null;
             }
 
             byte[]? response = await CenturionBridgeRequestAsync(bridgeIndex, batteryIndex, 0x00, []);
             if (response == null || response.Length == 0)
             {
-                return;
+                return null;
             }
 
             double batteryPercentage = response[0];
@@ -480,10 +527,7 @@ namespace LGSTrayHID
                 }
                 : PowerSupplyStatus.POWER_SUPPLY_STATUS_DISCHARGING;
 
-            HidppManagerContext.Instance.SignalDeviceEvent(
-                IPCMessageType.UPDATE,
-                new UpdateMessage(deviceId, batteryPercentage, status, 0, DateTimeOffset.Now, -1)
-            );
+            return new UpdateMessage(deviceId, batteryPercentage, status, 0, DateTimeOffset.Now, -1);
         }
 
         private async Task<byte[]?> CenturionRequestAsync(byte featureIndex, byte function, byte[] parameters, int timeout = 1000)

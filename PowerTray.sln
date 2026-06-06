@@ -22,8 +22,6 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 		.editorconfig = .editorconfig
 	EndProjectSection
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PowerTrayInstaller", "PowerTrayInstaller\PowerTrayInstaller.csproj", "{0702237E-AE87-4100-BDCE-5D4BA323ACC5}"
-EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -46,10 +44,6 @@ Global
 		{F85B7D61-5588-4BC1-8A46-E2A6899CFBC0}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{F85B7D61-5588-4BC1-8A46-E2A6899CFBC0}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{F85B7D61-5588-4BC1-8A46-E2A6899CFBC0}.Release|Any CPU.Build.0 = Release|Any CPU
-		{0702237E-AE87-4100-BDCE-5D4BA323ACC5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{0702237E-AE87-4100-BDCE-5D4BA323ACC5}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{0702237E-AE87-4100-BDCE-5D4BA323ACC5}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{0702237E-AE87-4100-BDCE-5D4BA323ACC5}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

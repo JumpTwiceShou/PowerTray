@@ -83,7 +83,7 @@ Other Logitech HID++ devices may work if they expose supported battery features 
 
 ## Install
 
-Download `PowerTraySetup-1.0.0.exe` from the [latest release](https://github.com/JumpTwiceShou/PowerTray/releases/tag/v1.0.0) and run it. The installer includes all runtime dependencies for Windows x64.
+Download `PowerTraySetup.exe` from the [latest release](https://github.com/JumpTwiceShou/PowerTray/releases/latest) and run it. Use `PowerTraySetup-full.exe` only if you need the installer to include the .NET runtime.
 
 During installation you can choose:
 

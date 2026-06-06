@@ -48,6 +48,7 @@ namespace LGSTrayUI
                     _alertState.Changed -= OnAlertStateChanged;
                     _device.PropertyChanged -= LogiDevicePropertyChanged;
                     _userSettings.PropertyChanged -= NotifyIconViewModelPropertyChanged;
+                    CheckTheme.StaticPropertyChanged -= CheckThemePropertyChanged;
                 }
 
                 // TODO: free unmanaged resources (unmanaged objects) and override finalizer
@@ -102,8 +103,7 @@ namespace LGSTrayUI
         {
             InitializeComponent();
 
-            if (!appSettings.UI.EnableRichToolTips)
-                taskbarIcon.TrayToolTip = null;
+            taskbarIcon.TrayToolTip = null;
 
             _device = device;
             _userSettings = userSettings;
@@ -116,7 +116,7 @@ namespace LGSTrayUI
 
             device.PropertyChanged += LogiDevicePropertyChanged;
             userSettings.PropertyChanged += NotifyIconViewModelPropertyChanged;
-            CheckTheme.StaticPropertyChanged += (_, _) => DrawBatteryIcon();
+            CheckTheme.StaticPropertyChanged += CheckThemePropertyChanged;
             _drawBatteryIcon = userSettings.NumericDisplay ? BatteryIconDrawing.DrawNumeric : BatteryIconDrawing.DrawIcon;
             _blinkTimer = new DispatcherTimer
             {
@@ -198,6 +198,14 @@ namespace LGSTrayUI
             if (e.PropertyName == nameof(UserSettingsWrapper.NumericDisplay))
             {
                 _drawBatteryIcon = userSettings.NumericDisplay ? BatteryIconDrawing.DrawNumeric : BatteryIconDrawing.DrawIcon;
+                DrawBatteryIcon();
+            }
+        }
+
+        private void CheckThemePropertyChanged(object? sender, PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName is nameof(CheckTheme.TaskbarLightTheme) or nameof(CheckTheme.TaskbarThemeSuffix))
+            {
                 DrawBatteryIcon();
             }
         }

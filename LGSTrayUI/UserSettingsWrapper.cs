@@ -46,6 +46,23 @@ namespace LGSTrayUI
             }
         }
 
+        public string ThemeMode
+        {
+            get => NormalizeThemeMode(_settings.ThemeMode);
+            set
+            {
+                string normalized = NormalizeThemeMode(value);
+                if (_settings.ThemeMode == normalized)
+                {
+                    return;
+                }
+
+                _settings.ThemeMode = normalized;
+                Save();
+                OnPropertyChanged();
+            }
+        }
+
         public bool NumericDisplay
         {
             get => _settings.NumericDisplay;
@@ -183,7 +200,7 @@ namespace LGSTrayUI
                 _settings.Devices[deviceId] = deviceSettings;
             }
 
-            if (!string.IsNullOrWhiteSpace(deviceName) && deviceSettings.LastDeviceName != deviceName)
+            if (IsPersistableDeviceName(deviceName) && deviceSettings.LastDeviceName != deviceName)
             {
                 deviceSettings.LastDeviceName = deviceName;
                 Save();
@@ -195,11 +212,33 @@ namespace LGSTrayUI
         public string GetDisplayName(string deviceId, string deviceName)
         {
             string alias = GetDeviceSettings(deviceId, deviceName).Alias;
-            return string.IsNullOrWhiteSpace(alias) ? deviceName : alias.Trim();
+            return string.IsNullOrWhiteSpace(alias) ? GetOriginalName(deviceId, deviceName) : alias.Trim();
         }
+
+        public string GetOriginalName(string deviceId, string deviceName)
+        {
+            DeviceAlertSettings deviceSettings = GetDeviceSettings(deviceId, deviceName);
+            if (IsPersistableDeviceName(deviceName))
+            {
+                return deviceName;
+            }
+
+            if (IsPersistableDeviceName(deviceSettings.LastDeviceName))
+            {
+                return deviceSettings.LastDeviceName;
+            }
+
+            return string.IsNullOrWhiteSpace(deviceId) ? "Unknown Logitech device" : deviceId;
+        }
+
+        public string GetAlias(string deviceId, string deviceName = "") =>
+            GetDeviceSettings(deviceId, deviceName).Alias;
 
         public int GetThreshold(string deviceId) =>
             GetDeviceSettings(deviceId).ThresholdPercent ?? _settings.GlobalAlerts.ThresholdPercent;
+
+        public bool HasDeviceThreshold(string deviceId) =>
+            GetDeviceSettings(deviceId).ThresholdPercent.HasValue;
 
         public bool GetWindowsNotificationEnabled(string deviceId) =>
             GetDeviceSettings(deviceId).WindowsNotification ?? _settings.GlobalAlerts.WindowsNotification;
@@ -286,6 +325,7 @@ namespace LGSTrayUI
                     if (settings != null)
                     {
                         settings.Language = NormalizeLanguage(settings.Language);
+                        settings.ThemeMode = NormalizeThemeMode(settings.ThemeMode);
                         settings.GlobalAlerts.ThresholdPercent = ClampPercent(settings.GlobalAlerts.ThresholdPercent);
                         return settings;
                     }
@@ -336,6 +376,24 @@ namespace LGSTrayUI
         private static string NormalizeLanguage(string? language)
         {
             return language?.Equals("zh-CN", StringComparison.OrdinalIgnoreCase) == true ? "zh-CN" : "en-US";
+        }
+
+        private static string NormalizeThemeMode(string? themeMode)
+        {
+            return themeMode?.ToLowerInvariant() switch
+            {
+                "light" => "light",
+                "dark" => "dark",
+                _ => "system",
+            };
+        }
+
+        private static bool IsPersistableDeviceName(string? deviceName)
+        {
+            return !string.IsNullOrWhiteSpace(deviceName) &&
+                   !deviceName.Equals("NOT FOUND", StringComparison.OrdinalIgnoreCase) &&
+                   !deviceName.Equals("Not Initialised", StringComparison.OrdinalIgnoreCase) &&
+                   !deviceName.Equals("Not Initialized", StringComparison.OrdinalIgnoreCase);
         }
 
         private static int ClampPercent(int value) => Math.Clamp(value, 1, 100);

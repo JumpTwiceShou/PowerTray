@@ -20,6 +20,10 @@ namespace LGSTrayUI
         private readonly LocalizationService _loc;
         private readonly SettingsWindowFactory _settingsWindowFactory;
         private readonly AlertManager _alertManager;
+        private readonly UpdateService _updateService;
+        private readonly LogiDeviceCollection _deviceCollection;
+        private readonly SemaphoreSlim _rediscoverSemaphore = new(1, 1);
+        private CancellationTokenSource? _presenceCts;
 
         public LocalizationService Loc => _loc;
 
@@ -45,7 +49,11 @@ namespace LGSTrayUI
         {
             get
             {
-                return "v" + Assembly.GetEntryAssembly()?.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion?.Split('+')[0] ?? "Missing";
+                string? version = Assembly.GetEntryAssembly()
+                    ?.GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+                    ?.InformationalVersion
+                    ?.Split('+')[0];
+                return string.IsNullOrWhiteSpace(version) ? "Missing" : "v" + version;
             }
         }
 
@@ -71,18 +79,21 @@ namespace LGSTrayUI
             IEnumerable<IDeviceManager> deviceManagers,
             LocalizationService loc,
             SettingsWindowFactory settingsWindowFactory,
-            AlertManager alertManager
+            AlertManager alertManager,
+            UpdateService updateService
         )
         {
             _mainTaskbarIconWrapper = mainTaskbarIconWrapper;
             ((ContextMenu)Application.Current.FindResource("SysTrayMenu")).DataContext = this;
 
-            _logiDevices = (logiDeviceCollection as LogiDeviceCollection)!.Devices;
+            _deviceCollection = (logiDeviceCollection as LogiDeviceCollection)!;
+            _logiDevices = _deviceCollection.Devices;
             _userSettings = userSettings;
             _deviceManagers = deviceManagers;
             _loc = loc;
             _settingsWindowFactory = settingsWindowFactory;
             _alertManager = alertManager;
+            _updateService = updateService;
             _alertManager.SetDevices(_logiDevices);
         }
 
@@ -99,50 +110,115 @@ namespace LGSTrayUI
         }
 
         [RelayCommand]
+        private async Task CheckForUpdatesAsync()
+        {
+            await _updateService.CheckForUpdatesAsync();
+        }
+
+        [RelayCommand]
+        private void ToggleNumericDisplay()
+        {
+            NumericDisplay = !NumericDisplay;
+        }
+
+        [RelayCommand]
+        private void ToggleAutoStart()
+        {
+            AutoStart = !AutoStart;
+        }
+
+        [RelayCommand]
         private void DeviceClicked(object? sender)
         {
-            if (sender is not MenuItem menuItem)
+            LogiDeviceViewModel? logiDevice = sender switch
             {
-                return;
-            }
+                LogiDeviceViewModel device => device,
+                MenuItem { DataContext: LogiDeviceViewModel device } => device,
+                _ => null
+            };
 
-            LogiDevice logiDevice = (LogiDevice)menuItem.DataContext;
+            if (logiDevice == null) { return; }
 
-            if (menuItem.IsChecked)
+            if (!logiDevice.IsChecked)
             {
                 _userSettings.AddDevice(logiDevice.DeviceId);
+                logiDevice.IsChecked = true;
             }
             else
             {
                 _userSettings.RemoveDevice(logiDevice.DeviceId);
+                logiDevice.IsChecked = false;
             }
         }
 
         [RelayCommand]
         private async Task RediscoverDevices()
         {
-            Console.WriteLine("Rediscover");
-            RediscoverDevicesEnabled = false;
+            await RunPresenceCheckAsync(manual: true, CancellationToken.None);
+        }
 
-            foreach (var manager in _deviceManagers)
+        private async Task RunPresenceCheckAsync(bool manual, CancellationToken cancellationToken)
+        {
+            if (!await _rediscoverSemaphore.WaitAsync(0, cancellationToken))
             {
-                manager.RediscoverDevices();
+                return;
             }
 
-            await Task.Delay(10_000);
+            try
+            {
+                if (manual)
+                {
+                    RediscoverDevicesEnabled = false;
+                }
 
-            RediscoverDevicesEnabled = true;
+                long epoch = _deviceCollection.BeginPresenceCheck();
+                foreach (var manager in _deviceManagers)
+                {
+                    manager.RediscoverDevices();
+                }
+
+                await Task.Delay(TimeSpan.FromSeconds(12), cancellationToken);
+                _deviceCollection.CompletePresenceCheck(epoch, manual ? 1 : 2);
+            }
+            catch (OperationCanceledException) { }
+            finally
+            {
+                if (manual)
+                {
+                    RediscoverDevicesEnabled = true;
+                }
+
+                _rediscoverSemaphore.Release();
+            }
         }
 
         public Task StartAsync(CancellationToken cancellationToken)
         {
+            _presenceCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            _ = Task.Run(() => PresenceLoopAsync(_presenceCts.Token), CancellationToken.None);
             return Task.CompletedTask;
         }
 
         public Task StopAsync(CancellationToken cancellationToken)
         {
+            _presenceCts?.Cancel();
+            _presenceCts?.Dispose();
+            _presenceCts = null;
             _mainTaskbarIconWrapper.Dispose();
             return Task.CompletedTask;
+        }
+
+        private async Task PresenceLoopAsync(CancellationToken cancellationToken)
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(30), cancellationToken);
+                    await RunPresenceCheckAsync(manual: false, cancellationToken);
+                }
+                catch (OperationCanceledException) { }
+            }
         }
     }
 }

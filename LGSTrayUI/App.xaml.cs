@@ -22,9 +22,23 @@ namespace LGSTrayUI;
 /// </summary>
 public partial class App : Application
 {
+    private const string SingleInstanceMutexName = @"Local\PowerTray.NativeBattery.Instance";
+    private const string ShowSettingsEventName = @"Local\PowerTray.NativeBattery.ShowSettings";
+
+    private Mutex? _singleInstanceMutex;
+    private EventWaitHandle? _showSettingsEvent;
+    private RegisteredWaitHandle? _showSettingsRegistration;
+
     protected override async void OnStartup(StartupEventArgs e)
     {
+        if (!TryAcquireSingleInstance(e.Args))
+        {
+            Shutdown();
+            return;
+        }
+
         base.OnStartup(e);
+        ThemeService.ApplyCurrentResources();
 
         Directory.SetCurrentDirectory(AppContext.BaseDirectory);
         Thread.CurrentThread.CurrentCulture = CultureInfo.InvariantCulture;
@@ -39,7 +53,9 @@ public partial class App : Application
         builder.Services.Configure<AppSettings>(builder.Configuration);
         builder.Services.AddLGSMessagePipe(true);
         builder.Services.AddSingleton<UserSettingsWrapper>();
+        builder.Services.AddSingleton<ThemeService>();
         builder.Services.AddSingleton<LocalizationService>();
+        builder.Services.AddSingleton<UpdateService>();
         builder.Services.AddSingleton<AlertStateService>();
         builder.Services.AddSingleton<SystemStateService>();
         builder.Services.AddSingleton<NotificationService>();
@@ -60,13 +76,70 @@ public partial class App : Application
         builder.Services.AddHostedService<NotifyIconViewModel>();
 
         var host = builder.Build();
+        _ = host.Services.GetRequiredService<ThemeService>();
+        RegisterShowSettingsSignal(host.Services.GetRequiredService<SettingsWindowFactory>());
         if (e.Args.Any(x => x.Equals("--settings", StringComparison.OrdinalIgnoreCase)))
         {
             host.Services.GetRequiredService<SettingsWindowFactory>().Show();
         }
 
-        await host.RunAsync();
-        Dispatcher.InvokeShutdown();
+        try
+        {
+            await host.RunAsync();
+        }
+        finally
+        {
+            CleanupSingleInstance();
+            Dispatcher.InvokeShutdown();
+        }
+    }
+
+    private bool TryAcquireSingleInstance(string[] args)
+    {
+        _singleInstanceMutex = new Mutex(true, SingleInstanceMutexName, out bool createdNew);
+        if (createdNew)
+        {
+            _showSettingsEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ShowSettingsEventName);
+            return true;
+        }
+
+        _singleInstanceMutex.Dispose();
+        _singleInstanceMutex = null;
+
+        if (args.Any(x => x.Equals("--settings", StringComparison.OrdinalIgnoreCase)))
+        {
+            using EventWaitHandle showSettingsEvent = new(false, EventResetMode.AutoReset, ShowSettingsEventName);
+            showSettingsEvent.Set();
+        }
+
+        return false;
+    }
+
+    private void RegisterShowSettingsSignal(SettingsWindowFactory settingsWindowFactory)
+    {
+        if (_showSettingsEvent == null)
+        {
+            return;
+        }
+
+        _showSettingsRegistration = ThreadPool.RegisterWaitForSingleObject(
+            _showSettingsEvent,
+            (_, _) => Dispatcher.BeginInvoke(settingsWindowFactory.Show),
+            null,
+            Timeout.Infinite,
+            false
+        );
+    }
+
+    private void CleanupSingleInstance()
+    {
+        _showSettingsRegistration?.Unregister(null);
+        _showSettingsRegistration = null;
+        _showSettingsEvent?.Dispose();
+        _showSettingsEvent = null;
+        _singleInstanceMutex?.ReleaseMutex();
+        _singleInstanceMutex?.Dispose();
+        _singleInstanceMutex = null;
     }
 
     static async Task LoadAppSettings(Microsoft.Extensions.Configuration.ConfigurationManager config)
@@ -79,10 +152,10 @@ public partial class App : Application
         {
             if (ex is FileNotFoundException || ex is InvalidDataException)
             {
-                var msgBoxRet = MessageBox.Show(
+                var msgBoxRet = ThemedMessageBox.Show(
                     "Failed to read appsettings.toml. Reset it to default?", 
                     "PowerTray - Settings Load Error", 
-                    MessageBoxButton.YesNo, MessageBoxImage.Error, MessageBoxResult.No
+                    MessageBoxButton.YesNo, MessageBoxResult.No
                 );
 
                 if (msgBoxRet == MessageBoxResult.Yes)

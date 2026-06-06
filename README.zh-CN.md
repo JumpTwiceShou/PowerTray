@@ -79,7 +79,7 @@ native 后端已验证：
 
 ## 安装
 
-从 [latest release](https://github.com/JumpTwiceShou/PowerTray/releases/tag/v1.0.0) 下载 `PowerTraySetup-1.0.0.exe` 并运行。安装器自带 Windows x64 所需运行时依赖。
+从 [latest release](https://github.com/JumpTwiceShou/PowerTray/releases/latest) 下载 `PowerTraySetup.exe` 并运行。只有在需要安装包自带 .NET 运行时时，才使用 `PowerTraySetup-full.exe`。
 
 安装时可以选择：
 

@@ -8,6 +8,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Threading;
 using System.Windows;
 
 namespace LGSTrayUI
@@ -19,9 +20,11 @@ namespace LGSTrayUI
         private readonly ISubscriber<IPCMessage> _subscriber;
         private readonly AppSettings _appSettings;
         private readonly AlertManager _alertManager;
+        private readonly Dictionary<string, int> _missedPresenceChecks = [];
+        private long _presenceEpoch;
 
         public ObservableCollection<LogiDeviceViewModel> Devices { get; } = [];
-        public IEnumerable<LogiDevice> GetDevices() => Devices;
+        public IEnumerable<LogiDevice> GetDevices() => Devices.Where(x => x.IsOnline);
 
         public LogiDeviceCollection(
             UserSettingsWrapper userSettings,
@@ -47,6 +50,10 @@ namespace LGSTrayUI
                 {
                     OnUpdateMessage(updateMessage);
                 }
+                else if (x is DeviceOfflineMessage offlineMessage)
+                {
+                    OnOfflineMessage(offlineMessage);
+                }
             });
 
             LoadPreviouslySelectedDevices();
@@ -70,7 +77,8 @@ namespace LGSTrayUI
                     _logiDeviceViewModelFactory.CreateViewModel((x) =>
                     {
                         x.DeviceId = deviceId!;
-                        x.DeviceName = "Not Initialised";
+                        x.DeviceName = _userSettings.GetOriginalName(deviceId!, string.Empty);
+                        x.IsOnline = false;
                         x.IsChecked = true;
                     })
                 );
@@ -79,24 +87,70 @@ namespace LGSTrayUI
 
         public bool TryGetDevice(string deviceId, [NotNullWhen(true)] out LogiDevice? device)
         {
-            device = Devices.SingleOrDefault(x => x.DeviceId == deviceId);
+            device = Devices.SingleOrDefault(x => x.IsOnline && x.DeviceId == deviceId);
 
             return device != null;
         }
 
+        public long BeginPresenceCheck()
+        {
+            return Interlocked.Increment(ref _presenceEpoch);
+        }
+
+        public void CompletePresenceCheck(long epoch, int requiredMisses)
+        {
+            Application.Current.Dispatcher.BeginInvoke(() =>
+            {
+                foreach (LogiDeviceViewModel device in Devices)
+                {
+                    if (string.IsNullOrWhiteSpace(device.DeviceId) || device.DeviceId == LogiDevice.NOT_FOUND)
+                    {
+                        continue;
+                    }
+
+                    if (device.LastPresenceEpoch >= epoch)
+                    {
+                        _missedPresenceChecks[device.DeviceId] = 0;
+                        continue;
+                    }
+
+                    int missed = _missedPresenceChecks.TryGetValue(device.DeviceId, out int existingMissed)
+                        ? existingMissed + 1
+                        : 1;
+                    _missedPresenceChecks[device.DeviceId] = missed;
+
+                    if (missed >= requiredMisses)
+                    {
+                        device.MarkOffline();
+                    }
+                }
+            });
+        }
+
         public void OnInitMessage(InitMessage initMessage)
         {
-            LogiDeviceViewModel? dev = Devices.SingleOrDefault(x => x.DeviceId == initMessage.deviceId);
-            if (dev != null)
+            Application.Current.Dispatcher.BeginInvoke(() =>
             {
-                Application.Current.Dispatcher.BeginInvoke(() => dev.UpdateState(initMessage));
+                long epoch = Interlocked.Read(ref _presenceEpoch);
+                LogiDeviceViewModel? dev = Devices.SingleOrDefault(x => x.DeviceId == initMessage.deviceId);
+                if (dev != null)
+                {
+                    dev.UpdateState(initMessage);
+                    dev.MarkPresence(epoch);
+                    _missedPresenceChecks[dev.DeviceId] = 0;
 
-                return;
-            }
+                    return;
+                }
 
-            dev = _logiDeviceViewModelFactory.CreateViewModel((x) => x.UpdateState(initMessage));
+                dev = _logiDeviceViewModelFactory.CreateViewModel((x) =>
+                {
+                    x.UpdateState(initMessage);
+                    x.MarkPresence(epoch);
+                });
+                _missedPresenceChecks[dev.DeviceId] = 0;
 
-            Application.Current.Dispatcher.BeginInvoke(() => Devices.Add(dev));
+                Devices.Add(dev);
+            });
         }
 
         public void OnUpdateMessage(UpdateMessage updateMessage)
@@ -107,7 +161,21 @@ namespace LGSTrayUI
                 if (device == null) { return; }
 
                 device.UpdateState(updateMessage);
+                device.MarkPresence(Interlocked.Read(ref _presenceEpoch));
+                _missedPresenceChecks[device.DeviceId] = 0;
                 _alertManager.Evaluate(device);
+            });
+        }
+
+        public void OnOfflineMessage(DeviceOfflineMessage offlineMessage)
+        {
+            Application.Current.Dispatcher.BeginInvoke(() =>
+            {
+                var device = Devices.FirstOrDefault(dev => dev.DeviceId == offlineMessage.deviceId);
+                if (device == null) { return; }
+
+                device.MarkOffline();
+                _missedPresenceChecks[device.DeviceId] = 2;
             });
         }
     }
