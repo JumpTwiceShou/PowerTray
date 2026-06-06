@@ -22,6 +22,10 @@ namespace LGSTrayHID
 #endif
 
                 await _publisher.PublishAsync(type, message);
+                if (type is IPCMessageType.INIT or IPCMessageType.UPDATE or IPCMessageType.OFFLINE)
+                {
+                    await PublishDiagnosticsSnapshotAsync();
+                }
             };
         }
 
@@ -35,8 +39,19 @@ namespace LGSTrayHID
         public Task StopAsync(CancellationToken cancellationToken)
         {
             HidppManagerContext.Instance.Stop();
-
             return Task.CompletedTask;
+        }
+
+        private async Task PublishDiagnosticsSnapshotAsync()
+        {
+            await _publisher.PublishAsync(
+                IPCMessageType.NATIVE_DIAGNOSTICS_RESPONSE,
+                new NativeDiagnosticsResponseMessage(
+                    NativeDiagnosticsResponseMessage.LatestSnapshotRequestId,
+                    NativeDiagnosticsStore.GetJson(),
+                    NativeDiagnosticsStore.GetSummary()
+                )
+            );
         }
     }
 }

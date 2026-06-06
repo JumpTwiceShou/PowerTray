@@ -192,6 +192,20 @@ namespace LGSTrayUI
             OnPropertyChanged(nameof(SelectedDevices));
         }
 
+        public void RemoveDeviceHistory(string deviceId)
+        {
+            bool changed = _settings.SelectedDevices.Remove(deviceId);
+            changed |= _settings.Devices.Remove(deviceId);
+            if (!changed)
+            {
+                return;
+            }
+
+            Save();
+            OnPropertyChanged(nameof(SelectedDevices));
+            OnDeviceSettingsChanged(deviceId);
+        }
+
         public DeviceAlertSettings GetDeviceSettings(string deviceId, string deviceName = "")
         {
             if (!_settings.Devices.TryGetValue(deviceId, out DeviceAlertSettings? deviceSettings))

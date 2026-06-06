@@ -56,6 +56,7 @@ public partial class App : Application
         builder.Services.AddSingleton<ThemeService>();
         builder.Services.AddSingleton<LocalizationService>();
         builder.Services.AddSingleton<UpdateService>();
+        builder.Services.AddSingleton<NativeDiagnosticsClient>();
         builder.Services.AddSingleton<AlertStateService>();
         builder.Services.AddSingleton<SystemStateService>();
         builder.Services.AddSingleton<NotificationService>();

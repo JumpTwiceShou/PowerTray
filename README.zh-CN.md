@@ -75,7 +75,11 @@ native 后端已验证：
 - `PRO X2 SUPERSTRIKE Wireless Mouse`
 - `PRO X 2 Lightspeed Gaming Headset`
 
-其他 Logitech HID++ 设备如果通过兼容 HID++ endpoint 暴露受支持的电量 feature（`0x1000`、`0x1001`、`0x1004`），也可能可用。
+native 后端已显式识别 G533、G535、G733、G935 和 PRO X Wireless 耳机产品 id。G733 这类耳机在可用时通过 `0x1F20 ADC MEASUREMENT` 读取电量。
+
+G522 LIGHTSPEED 已实现 Centurion `0x50` 传输和 `0x0104` 电量读取，但此版本没有用 G522 实机验证。
+
+其他 Logitech HID++ 设备如果通过兼容 HID++ endpoint 暴露受支持的电量 feature（`0x1000`、`0x1001`、`0x1004`、`0x1F20`），也可能可用。
 
 ## 安装
 

@@ -15,6 +15,9 @@ namespace LGSTrayUI;
 public sealed class UpdateService
 {
     private const string LatestReleaseUrl = "https://api.github.com/repos/JumpTwiceShou/PowerTray/releases/latest";
+    private const string InstallerEditionMarkerFileName = "installer-edition.txt";
+    private const string LightInstallerAssetName = "PowerTraySetup.exe";
+    private const string FullInstallerAssetName = "PowerTraySetup-full.exe";
     private readonly LocalizationService _loc;
     private readonly HttpClient _httpClient = new();
 
@@ -39,10 +42,8 @@ public sealed class UpdateService
                 return;
             }
 
-            GitHubAsset? installer = release.Assets
-                .Where(x => x.Name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
-                .OrderByDescending(x => x.Name.Contains("PowerTraySetup", StringComparison.OrdinalIgnoreCase))
-                .FirstOrDefault();
+            InstallerEdition installerEdition = GetInstalledInstallerEdition();
+            GitHubAsset? installer = SelectInstallerAsset(release.Assets, installerEdition);
 
             if (installer == null || string.IsNullOrWhiteSpace(installer.BrowserDownloadUrl))
             {
@@ -50,7 +51,7 @@ public sealed class UpdateService
                 return;
             }
 
-            string installerPath = await DownloadInstallerAsync(installer, latest);
+            string installerPath = await DownloadInstallerAsync(installer, latest, installerEdition);
             string result = ShowOptions(
                 string.Format(_loc["UpdateDownloadedBody"], latest),
                 _loc["UpdateDownloadedTitle"],
@@ -87,6 +88,53 @@ public sealed class UpdateService
             ThemedMessageBox.ShowOptions(message, title, options));
     }
 
+    public static InstallerEdition GetInstalledInstallerEdition()
+    {
+        string markerPath = Path.Combine(AppContext.BaseDirectory, InstallerEditionMarkerFileName);
+        try
+        {
+            if (File.Exists(markerPath))
+            {
+                string marker = File.ReadAllText(markerPath).Trim();
+                if (IsFullEditionMarker(marker))
+                {
+                    return InstallerEdition.Full;
+                }
+
+                if (IsLightEditionMarker(marker))
+                {
+                    return InstallerEdition.Light;
+                }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Fall back to directory inspection if the marker cannot be read.
+        }
+
+        return LooksSelfContained(AppContext.BaseDirectory) ? InstallerEdition.Full : InstallerEdition.Light;
+    }
+
+    private static GitHubAsset? SelectInstallerAsset(IEnumerable<GitHubAsset> assets, InstallerEdition edition)
+    {
+        GitHubAsset[] installers = assets
+            .Where(x => x.Name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+            .Where(x => IsPowerTrayInstallerAsset(x.Name))
+            .ToArray();
+
+        GitHubAsset? preferred = edition == InstallerEdition.Full
+            ? installers.FirstOrDefault(x => IsFullInstallerAsset(x.Name))
+            : installers.FirstOrDefault(x => IsLightInstallerAsset(x.Name));
+
+        if (preferred != null)
+        {
+            return preferred;
+        }
+
+        return installers.FirstOrDefault()
+               ?? assets.FirstOrDefault(x => x.Name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase));
+    }
+
     private async Task<GitHubRelease> GetLatestReleaseAsync()
     {
         using Stream stream = await _httpClient.GetStreamAsync(LatestReleaseUrl);
@@ -99,11 +147,12 @@ public sealed class UpdateService
         return release;
     }
 
-    private async Task<string> DownloadInstallerAsync(GitHubAsset installer, Version latest)
+    private async Task<string> DownloadInstallerAsync(GitHubAsset installer, Version latest, InstallerEdition edition)
     {
         string downloads = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
         Directory.CreateDirectory(downloads);
-        string fileName = $"PowerTraySetup-{latest}.exe";
+        string editionSuffix = edition == InstallerEdition.Full ? "-full" : string.Empty;
+        string fileName = $"PowerTraySetup-{latest}{editionSuffix}.exe";
         string targetPath = Path.Combine(downloads, fileName);
         string tempPath = targetPath + ".download";
 
@@ -120,6 +169,57 @@ public sealed class UpdateService
 
         File.Move(tempPath, targetPath, true);
         return targetPath;
+    }
+
+    private static bool IsPowerTrayInstallerAsset(string assetName)
+    {
+        string fileName = Path.GetFileName(assetName);
+        return fileName.StartsWith("PowerTraySetup", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsFullInstallerAsset(string assetName)
+    {
+        string fileName = Path.GetFileName(assetName);
+        string stem = Path.GetFileNameWithoutExtension(fileName);
+        return fileName.Equals(FullInstallerAssetName, StringComparison.OrdinalIgnoreCase)
+               || (stem.StartsWith("PowerTraySetup", StringComparison.OrdinalIgnoreCase)
+                   && stem.Contains("full", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsLightInstallerAsset(string assetName)
+    {
+        string fileName = Path.GetFileName(assetName);
+        string stem = Path.GetFileNameWithoutExtension(fileName);
+        return fileName.Equals(LightInstallerAssetName, StringComparison.OrdinalIgnoreCase)
+               || (stem.StartsWith("PowerTraySetup", StringComparison.OrdinalIgnoreCase)
+                   && !stem.Contains("full", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsFullEditionMarker(string marker)
+    {
+        return marker.Equals("full", StringComparison.OrdinalIgnoreCase)
+               || marker.Equals("self-contained", StringComparison.OrdinalIgnoreCase)
+               || marker.Equals("self-contained-full", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsLightEditionMarker(string marker)
+    {
+        return marker.Equals("light", StringComparison.OrdinalIgnoreCase)
+               || marker.Equals("framework-dependent", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool LooksSelfContained(string baseDirectory)
+    {
+        string[] runtimeFiles =
+        [
+            "hostfxr.dll",
+            "hostpolicy.dll",
+            "coreclr.dll",
+            "clrjit.dll",
+            "System.Private.CoreLib.dll",
+        ];
+
+        return runtimeFiles.Any(fileName => File.Exists(Path.Combine(baseDirectory, fileName)));
     }
 
     private static Version GetCurrentVersion()
@@ -167,4 +267,10 @@ public sealed class UpdateService
         [JsonPropertyName("browser_download_url")]
         public string BrowserDownloadUrl { get; set; } = string.Empty;
     }
+}
+
+public enum InstallerEdition
+{
+    Light,
+    Full,
 }

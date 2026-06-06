@@ -590,6 +590,7 @@
                                                 <Button Content="{Binding Loc[TestNotification]}" Command="{Binding TestNotificationCommand}"/>
                                                 <Button Content="{Binding Loc[TestBlink]}" Command="{Binding TestBlinkCommand}"/>
                                                 <Button Content="{Binding Loc[RestoreDefaults]}" Command="{Binding RestoreDefaultsCommand}"/>
+                                                <Button Content="{Binding Loc[RemoveHistory]}" Command="{Binding RemoveHistoryCommand}" Visibility="{Binding IsOffline, Converter={StaticResource BoolToVisibilityConverter}}"/>
                                             </WrapPanel>
                                             <WrapPanel>
                                                 <Button Content="{Binding Loc[PauseOneHour]}" Command="{Binding PauseOneHourCommand}"/>

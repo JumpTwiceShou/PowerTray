@@ -92,6 +92,17 @@ namespace LGSTrayUI
             return device != null;
         }
 
+        public void RemoveHistoricalDevice(string deviceId)
+        {
+            LogiDeviceViewModel? device = Devices.FirstOrDefault(x => x.DeviceId == deviceId && !x.IsOnline);
+            if (device != null)
+            {
+                Devices.Remove(device);
+            }
+
+            _missedPresenceChecks.Remove(deviceId);
+        }
+
         public long BeginPresenceCheck()
         {
             return Interlocked.Increment(ref _presenceEpoch);

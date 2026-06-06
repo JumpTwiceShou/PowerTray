@@ -11,7 +11,7 @@
 #endif
 
 #ifndef AppVersion
-  #define AppVersion "1.1.0"
+  #define AppVersion "1.2.0"
 #endif
 
 #ifndef IncludeRuntime
@@ -48,7 +48,7 @@ Name: "chinesesimp"; MessagesFile: "PowerTrayInstaller\ChineseSimplified.isl"
 
 [CustomMessages]
 english.StartWithWindows=Start with Windows
-chinesesimp.StartWithWindows=开机自启
+chinesesimp.StartWithWindows=开机自启动
 english.LaunchAfterInstall=Launch PowerTray after installation
 chinesesimp.LaunchAfterInstall=安装完成后启动 PowerTray
 english.MissingRuntimeMessage=PowerTray requires Microsoft .NET 8 Desktop Runtime x64, including Microsoft.NETCore.App 8.x and Microsoft.WindowsDesktop.App 8.x. The download page will open now. Install the runtime, then run this setup again.
@@ -257,12 +257,25 @@ begin
     RegDeleteValue(HKCU, RunKey, 'PowerTray');
 end;
 
+procedure WriteInstallerEdition();
+var
+  Edition: String;
+begin
+  if IncludeRuntime = 1 then
+    Edition := 'full'
+  else
+    Edition := 'light';
+
+  SaveStringToFile(ExpandConstant('{app}\installer-edition.txt'), Edition + #13#10, False);
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
   begin
     WriteInitialSettings();
     WriteAutoStart();
+    WriteInstallerEdition();
   end;
 end;
 

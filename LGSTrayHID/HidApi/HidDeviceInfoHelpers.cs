@@ -12,6 +12,7 @@ namespace LGSTrayHID.HidApi
         NONE = 0,
         SHORT,
         LONG,
+        CENTURION,
         VERY_LONG
     }
 
@@ -25,12 +26,41 @@ namespace LGSTrayHID.HidApi
             }
         }
 
+        internal static string? GetSerialNumber(this HidDeviceInfo deviceInfo)
+        {
+            unsafe
+            {
+                return Marshal.PtrToStringUni((nint)deviceInfo.SerialNumber);
+            }
+        }
+
+        internal static string? GetManufacturerString(this HidDeviceInfo deviceInfo)
+        {
+            unsafe
+            {
+                return Marshal.PtrToStringUni((nint)deviceInfo.ManufacturerString);
+            }
+        }
+
+        internal static string? GetProductString(this HidDeviceInfo deviceInfo)
+        {
+            unsafe
+            {
+                return Marshal.PtrToStringUni((nint)deviceInfo.ProductString);
+            }
+        }
+
         internal static HidppMessageType GetHidppMessageType(this HidDeviceInfo deviceInfo)
         {
             unsafe
             {
                 if ((deviceInfo.UsagePage & 0xFF00) == 0xFF00)
                 {
+                    if (deviceInfo.UsagePage == 0xFFA0)
+                    {
+                        return HidppMessageType.CENTURION;
+                    }
+
                     return deviceInfo.Usage switch
                     {
                         0x0001 => HidppMessageType.SHORT,

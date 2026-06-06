@@ -123,7 +123,9 @@ namespace LGSTrayHID
                 return;
             }
 
-            var nextSessions = CreateSessions(EnumerateEndpoints());
+            IReadOnlyCollection<HidEndpointInfo> endpoints = EnumerateEndpoints();
+            NativeDiagnosticsStore.BeginDiscovery(endpoints);
+            var nextSessions = CreateSessions(endpoints);
 
             lock (_sync)
             {
@@ -140,6 +142,15 @@ namespace LGSTrayHID
             {
                 _ = session.StartAsync();
             }
+
+            SignalDeviceEvent(
+                IPCMessageType.NATIVE_DIAGNOSTICS_RESPONSE,
+                new NativeDiagnosticsResponseMessage(
+                    NativeDiagnosticsResponseMessage.LatestSnapshotRequestId,
+                    NativeDiagnosticsStore.GetJson(),
+                    NativeDiagnosticsStore.GetSummary()
+                )
+            );
         }
 
         private static List<HidppDevices> CreateSessions(IReadOnlyCollection<HidEndpointInfo> endpoints)
@@ -148,13 +159,34 @@ namespace LGSTrayHID
 
             foreach (var group in endpoints.GroupBy(x => x.GroupKey))
             {
-                var shorts = group
+                var logitechEndpoints = group
+                    .Where(x => x.VendorId == LOGITECH_VENDOR_ID && x.OpenStatus.Equals("opened", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                if (logitechEndpoints.Count == 0)
+                {
+                    continue;
+                }
+
+                var centurions = logitechEndpoints
+                    .Where(x => x.MessageType == HidppMessageType.CENTURION && KnownLogitechDevices.IsCenturionProduct(x.ProductId))
+                    .OrderBy(x => x.UsagePage)
+                    .ThenBy(x => x.Path)
+                    .ToList();
+
+                if (centurions.Count > 0)
+                {
+                    sessions.Add(new HidppDevices(centurions[0], null));
+                    continue;
+                }
+
+                var shorts = logitechEndpoints
                     .Where(x => x.MessageType == HidppMessageType.SHORT)
                     .OrderBy(x => x.UsagePage)
                     .ThenBy(x => x.Path)
                     .ToList();
 
-                var longs = group
+                var longs = logitechEndpoints
                     .Where(x => x.MessageType == HidppMessageType.LONG)
                     .OrderBy(x => x.UsagePage)
                     .ThenBy(x => x.Path)
@@ -183,23 +215,57 @@ namespace LGSTrayHID
         private static unsafe List<HidEndpointInfo> EnumerateEndpoints()
         {
             List<HidEndpointInfo> endpoints = [];
-            HidDeviceInfo* head = HidEnumerate(LOGITECH_VENDOR_ID, 0x00);
+            HidDeviceInfo* head = HidEnumerate(0x00, 0x00);
 
             try
             {
                 for (HidDeviceInfo* current = head; current != null; current = current->Next)
                 {
                     HidDeviceInfo deviceInfo = *current;
-                    var messageType = deviceInfo.GetHidppMessageType();
-                    if (messageType is HidppMessageType.NONE or HidppMessageType.VERY_LONG)
+                    bool isLogitech = deviceInfo.VendorId == LOGITECH_VENDOR_ID;
+                    var messageType = isLogitech ? deviceInfo.GetHidppMessageType() : HidppMessageType.NONE;
+
+                    string path = deviceInfo.GetPath();
+                    if (!isLogitech)
                     {
+                        endpoints.Add(new HidEndpointInfo(
+                            path,
+                            Guid.Empty,
+                            deviceInfo.VendorId,
+                            deviceInfo.ProductId,
+                            deviceInfo.ReleaseNumber,
+                            deviceInfo.GetManufacturerString(),
+                            deviceInfo.GetProductString(),
+                            NativeDiagnosticsStore.HashForDiagnostics(deviceInfo.GetSerialNumber()),
+                            NativeDiagnosticsStore.HashForDiagnostics(path),
+                            "notProbedNonLogitech",
+                            deviceInfo.UsagePage,
+                            deviceInfo.Usage,
+                            deviceInfo.InterfaceNumber,
+                            messageType
+                        ));
                         continue;
                     }
 
-                    string path = deviceInfo.GetPath();
                     nint dev = HidOpenPath(ref deviceInfo);
                     if (dev == IntPtr.Zero)
                     {
+                        endpoints.Add(new HidEndpointInfo(
+                            path,
+                            Guid.Empty,
+                            deviceInfo.VendorId,
+                            deviceInfo.ProductId,
+                            deviceInfo.ReleaseNumber,
+                            deviceInfo.GetManufacturerString(),
+                            deviceInfo.GetProductString(),
+                            NativeDiagnosticsStore.HashForDiagnostics(deviceInfo.GetSerialNumber()),
+                            NativeDiagnosticsStore.HashForDiagnostics(path),
+                            "openFailed",
+                            deviceInfo.UsagePage,
+                            deviceInfo.Usage,
+                            deviceInfo.InterfaceNumber,
+                            messageType
+                        ));
                         continue;
                     }
 
@@ -209,7 +275,14 @@ namespace LGSTrayHID
                         endpoints.Add(new HidEndpointInfo(
                             path,
                             containerId,
+                            deviceInfo.VendorId,
                             deviceInfo.ProductId,
+                            deviceInfo.ReleaseNumber,
+                            deviceInfo.GetManufacturerString(),
+                            deviceInfo.GetProductString(),
+                            NativeDiagnosticsStore.HashForDiagnostics(deviceInfo.GetSerialNumber()),
+                            NativeDiagnosticsStore.HashForDiagnostics(path),
+                            "opened",
                             deviceInfo.UsagePage,
                             deviceInfo.Usage,
                             deviceInfo.InterfaceNumber,

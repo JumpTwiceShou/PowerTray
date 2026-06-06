@@ -1,6 +1,6 @@
 param(
     [string]$Configuration = "Release",
-    [string]$Version = "1.1.0",
+    [string]$Version = "1.2.0",
     [string]$Dotnet = "F:\logi\.dotnet-sdk\dotnet.exe",
     [string]$Iscc = ""
 )

@@ -25,6 +25,7 @@ namespace LGSTrayHID
         private BatteryUpdateReturn lastBatteryReturn;
         private DateTimeOffset lastUpdate = DateTimeOffset.MinValue;
         private bool _offlineSignalled;
+        private HidppDeviceIdentity? _identity;
 
         private readonly HidppDevices _parent;
         public HidppDevices Parent => _parent;
@@ -142,7 +143,8 @@ namespace LGSTrayHID
                     DeviceType = ret.GetParam(0);
                 }
 
-                DeviceName = KnownLogitechDevices.GetDisplayName(DeviceName, (DeviceType)DeviceType);
+                DeviceType = (int)KnownLogitechDevices.GetDeviceType(DeviceName, (DeviceType)DeviceType, _parent.ProductId);
+                DeviceName = KnownLogitechDevices.GetDisplayName(DeviceName, (DeviceType)DeviceType, _parent.ProductId);
             }
             else
             {
@@ -152,34 +154,54 @@ namespace LGSTrayHID
 
             if (_featureMap.TryGetValue(0x0003, out featureId))
             {
-                ret = await _parent.WriteRead20(_parent.DevShort, new byte[7] { 0x10, _deviceIdx, featureId, 0x00 | SW_ID, 0x00, 0x00, 0x00 });
-                if (!HasParams(ret, 15))
-                {
-                    Identifier = $"{DeviceName.GetHashCode():X04}";
-                }
-                else
-                {
-                    string unitId = BitConverter.ToString(ret.GetParams().ToArray(), 1, 4).Replace("-", string.Empty);
-                    string modelId = BitConverter.ToString(ret.GetParams().ToArray(), 7, 5).Replace("-", string.Empty);
+                byte[]? deviceInfoRawResponse;
+                byte[]? deviceInfoParams = null;
+                byte[]? serialRawResponse = null;
+                byte[]? serialParams = null;
 
-                    bool serialNumberSupported = (ret.GetParam(14) & 0x1) == 0x1;
-                    string? serialNumber = null;
-                    if (serialNumberSupported)
+                ret = await _parent.WriteRead20(_parent.DevShort, new byte[7] { 0x10, _deviceIdx, featureId, 0x00 | SW_ID, 0x00, 0x00, 0x00 });
+                deviceInfoRawResponse = ToBytes(ret);
+                if (HasParams(ret, 15))
+                {
+                    deviceInfoParams = ret.GetParams().ToArray();
+                    if ((ret.GetParam(14) & 0x1) == 0x1)
                     {
                         ret = await _parent.WriteRead20(_parent.DevShort, new byte[7] { 0x10, _deviceIdx, featureId, 0x20 | SW_ID, 0x00, 0x00, 0x00 });
-                        if (HasParams(ret, 11))
+                        serialRawResponse = ToBytes(ret);
+                        if (HasParams(ret, 1))
                         {
-                            serialNumber = BitConverter.ToString(ret.GetParams().ToArray(), 0, 11).Replace("-", string.Empty);
+                            byte[] responseParams = ret.GetParams().ToArray();
+                            serialParams = responseParams[..Math.Min(11, responseParams.Length)];
                         }
                     }
-
-                    Identifier = serialNumber ?? $"{unitId}-{modelId}";
                 }
+
+                _identity = HidppDeviceIdentity.FromDeviceInformation(
+                    DeviceName,
+                    _parent.ProductId,
+                    _deviceIdx,
+                    _parent.InterfaceNumber,
+                    _parent.EndpointIdentityKey,
+                    deviceInfoRawResponse,
+                    deviceInfoParams,
+                    serialRawResponse,
+                    serialParams
+                );
+                Identifier = _identity.Identifier;
             }
             else
             {
-                // Device does not have a serial identifier the device name as a hash identifier
-                Identifier = $"{DeviceName.GetHashCode():X04}";
+                _identity = HidppDeviceIdentity.CreateFallback(
+                    DeviceName,
+                    _parent.ProductId,
+                    _deviceIdx,
+                    _parent.InterfaceNumber,
+                    _parent.EndpointIdentityKey,
+                    null,
+                    null,
+                    "deviceInformationFeatureMissing"
+                );
+                Identifier = _identity.Identifier;
             }
 
 #if DEBUG
@@ -191,6 +213,7 @@ namespace LGSTrayHID
                 (0x1000, "Battery Unified Level"),
                 (0x1001, "Battery Voltage"),
                 (0x1004, "Unified Battery"),
+                (0x1F20, "ADC Measurement"),
             })
             {
                 if (_featureMap.ContainsKey(featureIdItr))
@@ -206,6 +229,7 @@ namespace LGSTrayHID
                 { } when FeatureMap.ContainsKey(0x1000) => Battery1000.GetBatteryAsync,
                 { } when FeatureMap.ContainsKey(0x1001) => Battery1001.GetBatteryAsync,
                 { } when FeatureMap.ContainsKey(0x1004) => Battery1004.GetBatteryAsync,
+                { } when FeatureMap.ContainsKey(0x1F20) => Battery1F20.GetBatteryAsync,
                 _ => null
             };
 
@@ -215,9 +239,30 @@ namespace LGSTrayHID
                 initialBattery = await ReadBatteryAsync();
                 if (initialBattery == null)
                 {
+                    _parent.RecordDeviceDiscovery(
+                        $"0x{_deviceIdx:X2}",
+                        DeviceName,
+                        (DeviceType)DeviceType,
+                        Identifier,
+                        _featureMap,
+                        GetSelectedBatteryFeature(),
+                        "batteryReadFailed",
+                        _identity
+                    );
                     return;
                 }
             }
+
+            _parent.RecordDeviceDiscovery(
+                $"0x{_deviceIdx:X2}",
+                DeviceName,
+                (DeviceType)DeviceType,
+                Identifier,
+                _featureMap,
+                GetSelectedBatteryFeature(),
+                initialBattery?.batteryPercentage.ToString("0.##"),
+                _identity
+            );
 
             HidppManagerContext.Instance.SignalDeviceEvent(
                 IPCMessageType.INIT,
@@ -281,6 +326,17 @@ namespace LGSTrayHID
 
             return await _getBatteryAsync.Invoke(this);
         }
+
+        private string? GetSelectedBatteryFeature()
+        {
+            if (FeatureMap.ContainsKey(0x1000)) { return "0x1000"; }
+            if (FeatureMap.ContainsKey(0x1001)) { return "0x1001"; }
+            if (FeatureMap.ContainsKey(0x1004)) { return "0x1004"; }
+            if (FeatureMap.ContainsKey(0x1F20)) { return "0x1F20"; }
+            return null;
+        }
+
+        private static byte[] ToBytes(Hidpp20 message) => message.Length == 0 ? [] : (byte[])message;
 
         private void SignalBatteryUpdate(BatteryUpdateReturn batStatus, bool forceIpcUpdate)
         {

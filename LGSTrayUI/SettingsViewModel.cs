@@ -6,11 +6,18 @@ using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using Microsoft.Win32;
+using Microsoft.Extensions.Options;
+using LGSTrayPrimitives;
+using LGSTrayPrimitives.MessageStructs;
 
 namespace LGSTrayUI;
 
@@ -22,6 +29,8 @@ public sealed partial class SettingsViewModel : ObservableObject
     private readonly AlertManager _alertManager;
     private readonly SystemStateService _systemState;
     private readonly UpdateService _updateService;
+    private readonly NativeDiagnosticsClient _nativeDiagnosticsClient;
+    private readonly AppSettings _appSettings;
     private bool _lastGHubRunning;
     private bool _lastPort9010Reachable;
 
@@ -46,7 +55,9 @@ public sealed partial class SettingsViewModel : ObservableObject
         NotificationService notifications,
         AlertManager alertManager,
         SystemStateService systemState,
-        UpdateService updateService
+        UpdateService updateService,
+        NativeDiagnosticsClient nativeDiagnosticsClient,
+        IOptions<AppSettings> appSettings
     )
     {
         _settings = settings;
@@ -55,6 +66,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         _alertManager = alertManager;
         _systemState = systemState;
         _updateService = updateService;
+        _nativeDiagnosticsClient = nativeDiagnosticsClient;
+        _appSettings = appSettings.Value;
         Loc = loc;
 
         _deviceCollection.Devices.CollectionChanged += OnDevicesChanged;
@@ -195,10 +208,16 @@ public sealed partial class SettingsViewModel : ObservableObject
     private async Task ExportDiagnosticsAsync()
     {
         await RefreshDiagnosticsAsync();
+        NativeDiagnosticsResponseMessage? nativeResponse = await _nativeDiagnosticsClient.RequestAsync(TimeSpan.FromSeconds(2));
+        string? nativeError = nativeResponse == null ? "PowerTrayHID did not respond before the diagnostics timeout." : nativeResponse.error;
+        JsonObject diagnosticsJson = BuildDiagnosticsJson(nativeResponse, nativeError);
+        string summary = BuildDiagnosticsSummary(nativeResponse, nativeError);
+        string readme = BuildDiagnosticsReadme();
+
         SaveFileDialog dialog = new()
         {
-            Filter = "Text files (*.txt)|*.txt|All files (*.*)|*.*",
-            FileName = $"PowerTray-diagnostics-{DateTime.Now:yyyyMMdd-HHmmss}.txt",
+            Filter = "Zip archives (*.zip)|*.zip|All files (*.*)|*.*",
+            FileName = $"PowerTray-diagnostics-{DateTime.Now:yyyyMMdd-HHmmss}.zip",
         };
 
         if (dialog.ShowDialog() != true)
@@ -208,7 +227,12 @@ public sealed partial class SettingsViewModel : ObservableObject
 
         try
         {
-            File.WriteAllText(dialog.FileName, DiagnosticSummary, Encoding.UTF8);
+            using FileStream file = File.Create(dialog.FileName);
+            using ZipArchive archive = new(file, ZipArchiveMode.Create);
+            WriteZipEntry(archive, "summary.txt", summary);
+            WriteZipEntry(archive, "diagnostics.json", diagnosticsJson.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            WriteZipEntry(archive, "readme.txt", readme);
+            DiagnosticSummary = summary;
             _notifications.Show(Loc["DiagnosticsExported"], dialog.FileName);
         }
         catch (Exception ex)
@@ -267,9 +291,16 @@ public sealed partial class SettingsViewModel : ObservableObject
         DeviceItems.Clear();
         foreach (LogiDeviceViewModel device in _deviceCollection.Devices.Where(x => x.DeviceName != LogiDevice.NOT_FOUND))
         {
-            DeviceItems.Add(new(device, _settings, Loc, _notifications, _alertManager));
+            DeviceItems.Add(new(device, _settings, Loc, _notifications, _alertManager, RemoveDeviceHistory));
         }
         DiagnosticSummary = BuildDiagnostics();
+    }
+
+    private void RemoveDeviceHistory(DeviceSettingsItemViewModel item)
+    {
+        _settings.RemoveDeviceHistory(item.DeviceId);
+        _deviceCollection.RemoveHistoricalDevice(item.DeviceId);
+        RefreshDeviceItems();
     }
 
     private void RefreshBindings()
@@ -306,9 +337,167 @@ public sealed partial class SettingsViewModel : ObservableObject
         sb.AppendLine("Devices:");
         foreach (LogiDeviceViewModel device in _deviceCollection.Devices)
         {
-            sb.AppendLine($"{device.DeviceId} | {device.DeviceName} | {device.BatteryPercentage:0.00}% | {device.PowerSupplyStatus} | {device.LastUpdate:o}");
+            sb.AppendLine($"{device.DeviceId} | {device.DeviceName} | {device.DeviceType} | {device.BatteryPercentage:0.00}% | {device.PowerSupplyStatus} | {device.LastUpdate:o}");
         }
         return sb.ToString();
+    }
+
+    private JsonObject BuildDiagnosticsJson(NativeDiagnosticsResponseMessage? nativeResponse, string? nativeError)
+    {
+        JsonNode? nativeNode = null;
+        if (!string.IsNullOrWhiteSpace(nativeResponse?.diagnosticsJson))
+        {
+            try
+            {
+                nativeNode = JsonNode.Parse(nativeResponse.diagnosticsJson);
+            }
+            catch
+            {
+                nativeError = "PowerTrayHID returned diagnostics JSON that could not be parsed.";
+            }
+        }
+
+        JsonObject root = new()
+        {
+            ["schemaVersion"] = 1,
+            ["generatedAt"] = DateTimeOffset.Now.ToString("o"),
+            ["appVersion"] = CurrentVersion,
+            ["system"] = BuildSystemJson(),
+            ["appSettings"] = BuildAppSettingsJson(),
+            ["hidEnumeration"] = CloneOrEmptyArray(nativeNode?["hidEnumeration"]),
+            ["unsupportedHidDevices"] = CloneOrEmptyArray(nativeNode?["unsupportedHidDevices"]),
+            ["nativeDiscovery"] = CloneOrEmptyArray(nativeNode?["nativeDiscovery"]),
+            ["recognizedDevices"] = BuildRecognizedDevicesJson(),
+            ["recentEvents"] = CloneOrEmptyArray(nativeNode?["recentEvents"]),
+        };
+
+        if (!string.IsNullOrWhiteSpace(nativeError))
+        {
+            root["nativeDiagnosticsError"] = nativeError;
+        }
+
+        return root;
+    }
+
+    private JsonObject BuildSystemJson()
+    {
+        return new JsonObject
+        {
+            ["windowsVersion"] = Environment.OSVersion.VersionString,
+            ["osArchitecture"] = RuntimeInformation.OSArchitecture.ToString(),
+            ["processArchitecture"] = RuntimeInformation.ProcessArchitecture.ToString(),
+            ["frameworkDescription"] = RuntimeInformation.FrameworkDescription,
+            ["is64BitProcess"] = Environment.Is64BitProcess,
+            ["currentLanguage"] = Language,
+            ["gHubRunning"] = _lastGHubRunning,
+            ["port9010Reachable"] = _lastPort9010Reachable,
+        };
+    }
+
+    private JsonObject BuildAppSettingsJson()
+    {
+        return new JsonObject
+        {
+            ["installerEdition"] = UpdateService.GetInstalledInstallerEdition().ToString(),
+            ["nativeEnabled"] = _appSettings.Native.Enabled,
+            ["nativePollPeriodSeconds"] = _appSettings.Native.PollPeriod,
+            ["nativeRetryTimeSeconds"] = _appSettings.Native.RetryTime,
+            ["ghubEnabled"] = _appSettings.GHub.Enabled,
+            ["httpEnabled"] = _appSettings.HTTPServer.Enabled,
+            ["httpPort"] = _appSettings.HTTPServer.Port,
+            ["language"] = Language,
+            ["theme"] = ThemeMode,
+            ["numericDisplay"] = NumericDisplay,
+            ["alertSummary"] = _settings.ExportSettingsSummary(),
+        };
+    }
+
+    private JsonArray BuildRecognizedDevicesJson()
+    {
+        JsonArray devices = [];
+        foreach (LogiDeviceViewModel device in _deviceCollection.Devices)
+        {
+            devices.Add(new JsonObject
+            {
+                ["deviceId"] = device.DeviceId,
+                ["deviceName"] = device.DeviceName,
+                ["displayName"] = device.BaseDisplayName,
+                ["deviceType"] = device.DeviceType.ToString(),
+                ["hasBattery"] = device.HasBattery,
+                ["isOnline"] = device.IsOnline,
+                ["batteryPercentage"] = device.BatteryPercentage,
+                ["powerSupplyStatus"] = device.PowerSupplyStatus.ToString(),
+                ["batteryVoltage"] = device.BatteryVoltage,
+                ["lastUpdate"] = device.LastUpdate == DateTimeOffset.MinValue ? null : device.LastUpdate.ToString("o"),
+            });
+        }
+
+        return devices;
+    }
+
+    private string BuildDiagnosticsSummary(NativeDiagnosticsResponseMessage? nativeResponse, string? nativeError)
+    {
+        StringBuilder sb = new();
+        sb.AppendLine("PowerTray Diagnostics");
+        sb.AppendLine($"{Loc["ReleaseVersion"]}: {CurrentVersion}");
+        sb.AppendLine($"Generated: {DateTimeOffset.Now:o}");
+        sb.AppendLine($"{Loc["CurrentLanguage"]}: {Language}");
+        sb.AppendLine($"{Loc["GHubStatus"]}: {GHubStatus}");
+        sb.AppendLine($"{Loc["Port9010Status"]}: {Port9010Status}");
+        sb.AppendLine($"Native diagnostics: {(nativeResponse == null ? "unavailable" : "available")}");
+        if (!string.IsNullOrWhiteSpace(nativeError))
+        {
+            sb.AppendLine($"Native diagnostics error: {nativeError}");
+        }
+        if (!string.IsNullOrWhiteSpace(nativeResponse?.summaryText))
+        {
+            sb.AppendLine(nativeResponse.summaryText);
+        }
+        sb.AppendLine();
+        sb.AppendLine("Recognized devices:");
+        foreach (LogiDeviceViewModel device in _deviceCollection.Devices)
+        {
+            sb.AppendLine($"- {device.DeviceId} | {device.DeviceName} | {device.DeviceType} | {device.BatteryPercentage:0.00}% | {device.PowerSupplyStatus}");
+        }
+
+        return sb.ToString();
+    }
+
+    private static string BuildDiagnosticsReadme()
+    {
+        return """
+PowerTray diagnostics package
+
+Please share diagnostics.json when reporting an unsupported Logitech device.
+The package intentionally hashes HID paths and serial numbers. Product names,
+product ids, usage pages, interface numbers, HID++ feature maps, and battery
+probe results are kept because they are needed to add device support.
+
+Important fields:
+- hidEnumeration: all Logitech HID endpoints visible to Windows.
+- unsupportedHidDevices: non-Logitech HID background endpoints and Logitech
+  endpoints that were not probed or could not be opened.
+- nativeDiscovery: what PowerTrayHID tried during discovery.
+- nativeDiscovery[].failureReasons: why a device/session was skipped.
+- nativeDiscovery[].devices[].identity: raw 0x0003 identity responses, unit id,
+  model id, serial response, and the final identifier source.
+- nativeDiscovery[].devices[].featureMap: HID++ features exposed by a recognized device.
+- nativeDiscovery[].centurion: Centurion report id, device address, bridge, and battery data.
+- recognizedDevices: devices currently shown by the UI.
+""";
+    }
+
+    private static JsonNode CloneOrEmptyArray(JsonNode? node)
+    {
+        return node?.DeepClone() ?? new JsonArray();
+    }
+
+    private static void WriteZipEntry(ZipArchive archive, string entryName, string content)
+    {
+        ZipArchiveEntry entry = archive.CreateEntry(entryName);
+        using Stream entryStream = entry.Open();
+        using StreamWriter writer = new(entryStream, new UTF8Encoding(false));
+        writer.Write(content);
     }
 
     private static string GetCurrentVersion()
@@ -328,6 +517,7 @@ public sealed partial class DeviceSettingsItemViewModel : ObservableObject
     private readonly UserSettingsWrapper _settings;
     private readonly NotificationService _notifications;
     private readonly AlertManager _alertManager;
+    private readonly Action<DeviceSettingsItemViewModel> _removeHistory;
     private bool _isEditingThreshold;
 
     public LocalizationService Loc { get; }
@@ -375,7 +565,8 @@ public sealed partial class DeviceSettingsItemViewModel : ObservableObject
         UserSettingsWrapper settings,
         LocalizationService loc,
         NotificationService notifications,
-        AlertManager alertManager
+        AlertManager alertManager,
+        Action<DeviceSettingsItemViewModel> removeHistory
     )
     {
         _device = device;
@@ -383,6 +574,7 @@ public sealed partial class DeviceSettingsItemViewModel : ObservableObject
         Loc = loc;
         _notifications = notifications;
         _alertManager = alertManager;
+        _removeHistory = removeHistory;
         _device.PropertyChanged += (_, _) => Refresh();
     }
 
@@ -462,6 +654,12 @@ public sealed partial class DeviceSettingsItemViewModel : ObservableObject
     {
         _settings.RestoreDeviceDefaults(DeviceId);
         Refresh();
+    }
+
+    [RelayCommand]
+    private void RemoveHistory()
+    {
+        _removeHistory(this);
     }
 
     [RelayCommand]

@@ -1,4 +1,5 @@
 using LGSTrayHID.HidApi;
+using LGSTrayHID.Features;
 using LGSTrayPrimitives;
 using LGSTrayPrimitives.MessageStructs;
 using System.Text;
@@ -14,9 +15,12 @@ namespace LGSTrayHID
 
         private const int READ_TIMEOUT = 100;
         private const int DEFAULT_COMMAND_TIMEOUT = 250;
+        private const byte CENTURION_REPORT_ID = CenturionFrameCodec.ReportId;
+        private const byte CENTURION_ADDRESSED_REPORT_ID = CenturionFrameCodec.AddressedReportId;
 
         private readonly HidEndpointInfo _shortEndpoint;
         private readonly HidEndpointInfo? _longEndpoint;
+        private readonly DiscoverySessionDiagnostic _diagnostics;
         private readonly Dictionary<ushort, HidppDevice> _deviceCollection = [];
         private readonly SemaphoreSlim _commandSemaphore = new(1, 1);
         private readonly Channel<byte[]> _channel = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(64)
@@ -31,6 +35,9 @@ namespace LGSTrayHID
         private CancellationTokenSource? _readCts;
         private byte _pingPayload = 0x55;
         private byte _centurionSwId = 0x01;
+        private byte _centurionReportId = CENTURION_REPORT_ID;
+        private byte? _centurionDeviceAddress;
+        private int _centurionProbeAttempts;
         private readonly HashSet<string> _offlineSignalledDeviceIds = [];
         private int _disposeCount;
         private int _started;
@@ -38,12 +45,20 @@ namespace LGSTrayHID
         public IReadOnlyDictionary<ushort, HidppDevice> DeviceCollection => _deviceCollection;
         public HidDevicePtr DevShort => _devShort;
         public HidDevicePtr DevLong => _devLong;
+        public ushort ProductId => _shortEndpoint.ProductId;
+        public int InterfaceNumber => _shortEndpoint.InterfaceNumber;
+        internal string EndpointIdentityKey => $"{_shortEndpoint.SafeId}:{_shortEndpoint.PathHash}";
+        internal byte CenturionReportId => _centurionReportId;
+        internal byte? CenturionDeviceAddress => _centurionDeviceAddress;
+        internal int CenturionProbeAttempts => _centurionProbeAttempts;
         public bool Disposed => _disposeCount > 0;
 
         internal HidppDevices(HidEndpointInfo shortEndpoint, HidEndpointInfo? longEndpoint)
         {
             _shortEndpoint = shortEndpoint;
             _longEndpoint = longEndpoint;
+            _centurionReportId = KnownLogitechDevices.GetCenturionReportId(shortEndpoint.ProductId);
+            _diagnostics = NativeDiagnosticsStore.AddSession(shortEndpoint, longEndpoint);
         }
 
         public async Task StartAsync()
@@ -57,6 +72,7 @@ namespace LGSTrayHID
             _devShort = OpenEndpoint(_shortEndpoint);
             if (_devShort == IntPtr.Zero)
             {
+                AddFailure("openFailed");
                 Dispose();
                 return;
             }
@@ -69,6 +85,10 @@ namespace LGSTrayHID
                 if (_devLong != IntPtr.Zero)
                 {
                     StartReadThread(_devLong, _readCts.Token);
+                }
+                else
+                {
+                    AddFailure("openLongFailed");
                 }
             }
 
@@ -191,6 +211,7 @@ namespace LGSTrayHID
         {
             if (_devShort == IntPtr.Zero)
             {
+                AddFailure("openFailed");
                 return;
             }
 
@@ -243,6 +264,7 @@ namespace LGSTrayHID
         private async Task<bool> TryReceiverDiscoveryAsync()
         {
             byte[] ret = await WriteRead10(_devShort, [0x10, 0xFF, 0x81, 0x02, 0x00, 0x00, 0x00], 1000);
+            NativeDiagnosticsStore.UpdateSession(_diagnostics, x => x.ReceiverDiscoveryResponse = NativeDiagnosticsStore.FormatBytes(ret));
             if (ret.Length < 6 || ret[2] != 0x81 || ret[3] != 0x02)
             {
                 return false;
@@ -259,42 +281,110 @@ namespace LGSTrayHID
 
         private async Task<bool> TryDiscoverCenturionAsync()
         {
-            if (_shortEndpoint.ProductId != 0x0AF7)
+            if (!KnownLogitechDevices.IsCenturionProduct(_shortEndpoint.ProductId))
             {
                 return false;
+            }
+
+            NativeDiagnosticsStore.UpdateSession(_diagnostics, x =>
+            {
+                x.Centurion ??= new CenturionDiscoveryDiagnostic();
+                x.Centurion.ReportId = NativeDiagnosticsStore.FormatHex(_centurionReportId, 2);
+            });
+
+            if (_centurionReportId == CENTURION_ADDRESSED_REPORT_ID && _centurionDeviceAddress == null)
+            {
+                _ = await ProbeCenturionDeviceAddressAsync();
             }
 
             Dictionary<ushort, byte> dongleFeatures = await DiscoverCenturionFeaturesAsync(static (featureIndex, function, parameters, self) =>
                 self.CenturionRequestAsync(featureIndex, function, parameters)
             );
-            if (!dongleFeatures.TryGetValue(0x0003, out byte bridgeIndex))
+            NativeDiagnosticsStore.UpdateSession(_diagnostics, x =>
             {
-                return false;
+                x.Centurion ??= new CenturionDiscoveryDiagnostic();
+                x.Centurion.ReportId = NativeDiagnosticsStore.FormatHex(_centurionReportId, 2);
+                x.Centurion.DeviceAddress = _centurionDeviceAddress.HasValue ? NativeDiagnosticsStore.FormatHex(_centurionDeviceAddress.Value, 2) : null;
+                x.Centurion.ProbeAttempts = _centurionProbeAttempts;
+                x.Centurion.DongleFeatureMap = NativeDiagnosticsStore.FormatFeatureMap(dongleFeatures);
+            });
+            if (dongleFeatures.TryGetValue(0x0003, out byte bridgeIndex))
+            {
+                Dictionary<ushort, byte> headsetFeatures = await DiscoverCenturionFeaturesAsync((featureIndex, function, parameters, self) =>
+                    self.CenturionBridgeRequestAsync(bridgeIndex, featureIndex, function, parameters)
+                );
+                NativeDiagnosticsStore.UpdateSession(_diagnostics, x =>
+                {
+                    x.Centurion ??= new CenturionDiscoveryDiagnostic();
+                    x.Centurion.BridgeIndex = NativeDiagnosticsStore.FormatHex(bridgeIndex, 2);
+                    x.Centurion.SubDeviceFeatureMap = NativeDiagnosticsStore.FormatFeatureMap(headsetFeatures);
+                });
+                if (headsetFeatures.Count == 0)
+                {
+                    AddFailure("featureSetMissing");
+                    return true;
+                }
+
+                return await InitialiseCenturionDeviceAsync(
+                    headsetFeatures,
+                    (featureIndex, function, parameters) => CenturionBridgeRequestAsync(bridgeIndex, featureIndex, function, parameters),
+                    KnownLogitechDevices.GetFallbackName(DeviceType.Headset, _shortEndpoint.ProductId)
+                );
             }
 
-            Dictionary<ushort, byte> headsetFeatures = await DiscoverCenturionFeaturesAsync((featureIndex, function, parameters, self) =>
-                self.CenturionBridgeRequestAsync(bridgeIndex, featureIndex, function, parameters)
-            );
-            if (headsetFeatures.Count == 0)
+            if (dongleFeatures.Count > 0 && (_shortEndpoint.ProductId == 0x0B19 || dongleFeatures.ContainsKey(0x0104)))
             {
-                return false;
+                NativeDiagnosticsStore.UpdateSession(_diagnostics, x =>
+                {
+                    x.Centurion ??= new CenturionDiscoveryDiagnostic();
+                    x.Centurion.SubDeviceFeatureMap = NativeDiagnosticsStore.FormatFeatureMap(dongleFeatures);
+                });
+                return await InitialiseCenturionDeviceAsync(
+                    dongleFeatures,
+                    (featureIndex, function, parameters) => CenturionRequestAsync(featureIndex, function, parameters),
+                    KnownLogitechDevices.GetFallbackName(DeviceType.Headset, _shortEndpoint.ProductId)
+                );
             }
 
-            string name = await ReadCenturionNameAsync(bridgeIndex, headsetFeatures) ?? "PRO X 2 LIGHTSPEED";
+            AddFailure(_centurionReportId == CENTURION_ADDRESSED_REPORT_ID && _centurionDeviceAddress == null
+                ? "centurionAddressUnknown"
+                : "centurionBridgeMissing");
+            return true;
+        }
+
+        private delegate Task<byte[]?> CenturionFeatureRequest(byte featureIndex, byte function, byte[] parameters, HidppDevices self);
+        private delegate Task<byte[]?> CenturionDeviceRequest(byte featureIndex, byte function, byte[] parameters);
+
+        private async Task<bool> InitialiseCenturionDeviceAsync(
+            IReadOnlyDictionary<ushort, byte> features,
+            CenturionDeviceRequest request,
+            string fallbackName
+        )
+        {
+            string name = await ReadCenturionNameAsync(features, request) ?? fallbackName;
             name = KnownLogitechDevices.GetDisplayName(name, DeviceType.Headset, _shortEndpoint.ProductId);
-            string serial = await ReadCenturionSerialAsync(bridgeIndex, headsetFeatures) ?? _shortEndpoint.ProductId.ToString("X4");
+            string? serial = await ReadCenturionSerialAsync(features, request);
+            if (!HidppDeviceIdentity.IsMeaningfulTextIdentifier(serial))
+            {
+                serial = $"fallback-{_shortEndpoint.ProductId:X4}-{_shortEndpoint.InterfaceNumber}-{_shortEndpoint.PathHash}";
+            }
             string deviceId = $"centurion-{serial}";
-            bool hasBattery = headsetFeatures.ContainsKey(0x0104);
+            bool hasBattery = features.ContainsKey(0x0104);
             UpdateMessage? initialBattery = null;
             if (hasBattery)
             {
-                initialBattery = await CreateCenturionBatteryUpdateAsync(deviceId, bridgeIndex, headsetFeatures);
+                initialBattery = await CreateCenturionBatteryUpdateAsync(deviceId, features, request);
                 if (initialBattery == null)
                 {
-                    return true;
+                    AddFailure("batteryReadFailed");
                 }
             }
+            else
+            {
+                AddFailure("batteryFeatureMissing");
+            }
 
+            RecordDeviceDiscovery("0xFF", name, DeviceType.Headset, deviceId, features, "0x0104", initialBattery?.batteryPercentage.ToString("0.##"));
             HidppManagerContext.Instance.SignalDeviceEvent(
                 IPCMessageType.INIT,
                 new InitMessage(deviceId, name, hasBattery, DeviceType.Headset)
@@ -310,18 +400,16 @@ namespace LGSTrayHID
                 while (!Disposed)
                 {
                     await Task.Delay(GlobalSettings.settings.PollPeriod * 1000);
-                    await UpdateCenturionBatteryAsync(deviceId, bridgeIndex, headsetFeatures);
+                    await UpdateCenturionBatteryAsync(deviceId, features, request);
                 }
             });
 
 #if DEBUG
             Console.WriteLine($"Centurion headset ready: {name} {deviceId}");
-            Console.WriteLine("Centurion headset features: " + string.Join(", ", headsetFeatures.Select(x => $"0x{x.Key:X4}@{x.Value}")));
+            Console.WriteLine("Centurion headset features: " + string.Join(", ", features.Select(x => $"0x{x.Key:X4}@{x.Value}")));
 #endif
             return true;
         }
-
-        private delegate Task<byte[]?> CenturionFeatureRequest(byte featureIndex, byte function, byte[] parameters, HidppDevices self);
 
         private async Task<Dictionary<ushort, byte>> DiscoverCenturionFeaturesAsync(CenturionFeatureRequest request)
         {
@@ -415,14 +503,14 @@ namespace LGSTrayHID
             return (ushort)((response[0] << 8) | response[1]);
         }
 
-        private async Task<string?> ReadCenturionNameAsync(byte bridgeIndex, IReadOnlyDictionary<ushort, byte> features)
+        private async Task<string?> ReadCenturionNameAsync(IReadOnlyDictionary<ushort, byte> features, CenturionDeviceRequest request)
         {
             if (!features.TryGetValue(0x0101, out byte nameIndex))
             {
                 return null;
             }
 
-            byte[]? response = await CenturionBridgeRequestAsync(bridgeIndex, nameIndex, 0x00, []);
+            byte[]? response = await request(nameIndex, 0x00, []);
             if (response == null || response.Length == 0)
             {
                 return null;
@@ -442,7 +530,7 @@ namespace LGSTrayHID
             List<byte> nameBytes = [];
             while (nameBytes.Count < nameLength)
             {
-                byte[]? fragment = await CenturionBridgeRequestAsync(bridgeIndex, nameIndex, 0x10, [(byte)nameBytes.Count]);
+                byte[]? fragment = await request(nameIndex, 0x10, [(byte)nameBytes.Count]);
                 if (fragment == null || fragment.Length == 0)
                 {
                     break;
@@ -454,14 +542,14 @@ namespace LGSTrayHID
             return nameBytes.Count > 0 ? Encoding.UTF8.GetString([.. nameBytes]).TrimEnd('\0') : null;
         }
 
-        private async Task<string?> ReadCenturionSerialAsync(byte bridgeIndex, IReadOnlyDictionary<ushort, byte> features)
+        private async Task<string?> ReadCenturionSerialAsync(IReadOnlyDictionary<ushort, byte> features, CenturionDeviceRequest request)
         {
             if (!features.TryGetValue(0x0100, out byte deviceInfoIndex))
             {
                 return null;
             }
 
-            byte[]? response = await CenturionBridgeRequestAsync(bridgeIndex, deviceInfoIndex, 0x20, []);
+            byte[]? response = await request(deviceInfoIndex, 0x20, []);
             if (response == null || response.Length < 2)
             {
                 return null;
@@ -471,9 +559,9 @@ namespace LGSTrayHID
             return serialLength > 0 ? Encoding.ASCII.GetString(response.AsSpan(1, serialLength)).TrimEnd('\0') : null;
         }
 
-        private async Task UpdateCenturionBatteryAsync(string deviceId, byte bridgeIndex, IReadOnlyDictionary<ushort, byte> features)
+        private async Task UpdateCenturionBatteryAsync(string deviceId, IReadOnlyDictionary<ushort, byte> features, CenturionDeviceRequest request)
         {
-            UpdateMessage? update = await CreateCenturionBatteryUpdateAsync(deviceId, bridgeIndex, features);
+            UpdateMessage? update = await CreateCenturionBatteryUpdateAsync(deviceId, features, request);
             if (update != null)
             {
                 lock (_offlineSignalledDeviceIds)
@@ -504,30 +592,65 @@ namespace LGSTrayHID
             );
         }
 
-        private async Task<UpdateMessage?> CreateCenturionBatteryUpdateAsync(string deviceId, byte bridgeIndex, IReadOnlyDictionary<ushort, byte> features)
+        private async Task<UpdateMessage?> CreateCenturionBatteryUpdateAsync(
+            string deviceId,
+            IReadOnlyDictionary<ushort, byte> features,
+            CenturionDeviceRequest request
+        )
         {
             if (!features.TryGetValue(0x0104, out byte batteryIndex))
             {
                 return null;
             }
 
-            byte[]? response = await CenturionBridgeRequestAsync(bridgeIndex, batteryIndex, 0x00, []);
+            byte[]? response = await request(batteryIndex, 0x00, []);
+            NativeDiagnosticsStore.UpdateSession(_diagnostics, x =>
+            {
+                x.Centurion ??= new CenturionDiscoveryDiagnostic();
+                x.Centurion.BatteryRawResponse = NativeDiagnosticsStore.FormatBytes(response);
+            });
             if (response == null || response.Length == 0)
             {
                 return null;
             }
 
-            double batteryPercentage = response[0];
-            PowerSupplyStatus status = response.Length >= 3
-                ? response[2] switch
-                {
-                    1 or 2 => PowerSupplyStatus.POWER_SUPPLY_STATUS_CHARGING,
-                    3 => PowerSupplyStatus.POWER_SUPPLY_STATUS_FULL,
-                    _ => PowerSupplyStatus.POWER_SUPPLY_STATUS_DISCHARGING,
-                }
-                : PowerSupplyStatus.POWER_SUPPLY_STATUS_DISCHARGING;
+            BatteryUpdateReturn? battery = CenturionBatteryCodec.Decode(response);
+            if (battery == null)
+            {
+                return null;
+            }
 
-            return new UpdateMessage(deviceId, batteryPercentage, status, 0, DateTimeOffset.Now, -1);
+            return new UpdateMessage(deviceId, battery.Value.batteryPercentage, battery.Value.status, battery.Value.batteryMVolt, DateTimeOffset.Now, -1);
+        }
+
+        private async Task<bool> ProbeCenturionDeviceAddressAsync()
+        {
+            if (_centurionReportId != CENTURION_ADDRESSED_REPORT_ID || _centurionDeviceAddress != null)
+            {
+                return false;
+            }
+
+            byte[] payload = [0x00, 0x10, 0x00, 0x00, 0x00];
+            for (int address = 0; address <= byte.MaxValue && !Disposed; address++)
+            {
+                _centurionDeviceAddress = (byte)address;
+                _centurionProbeAttempts++;
+                await WriteCenturionCplAsync(payload);
+                byte[]? inner = await ReadCenturionInnerAsync(8);
+                if (inner is { Length: >= 2 } && inner[0] == 0x00 && (inner[1] & 0xF0) == 0x10)
+                {
+                    NativeDiagnosticsStore.UpdateSession(_diagnostics, x =>
+                    {
+                        x.Centurion ??= new CenturionDiscoveryDiagnostic();
+                        x.Centurion.DeviceAddress = _centurionDeviceAddress.HasValue ? NativeDiagnosticsStore.FormatHex(_centurionDeviceAddress.Value, 2) : null;
+                        x.Centurion.ProbeAttempts = _centurionProbeAttempts;
+                    });
+                    return true;
+                }
+            }
+
+            _centurionDeviceAddress = null;
+            return false;
         }
 
         private async Task<byte[]?> CenturionRequestAsync(byte featureIndex, byte function, byte[] parameters, int timeout = 1000)
@@ -648,12 +771,7 @@ namespace LGSTrayHID
 
         private async Task WriteCenturionCplAsync(byte[] payload)
         {
-            byte cplLength = (byte)(payload.Length + 1);
-            byte[] frame = new byte[64];
-            frame[0] = 0x51;
-            frame[1] = cplLength;
-            frame[2] = 0x00;
-            Array.Copy(payload, 0, frame, 3, Math.Min(payload.Length, frame.Length - 3));
+            byte[] frame = CenturionFrameCodec.BuildFrame(_centurionReportId, _centurionDeviceAddress, payload);
             await _devShort.WriteAsync(frame);
         }
 
@@ -665,24 +783,17 @@ namespace LGSTrayHID
                 try
                 {
                     byte[] frame = await _channel.Reader.ReadAsync(cts.Token);
-                    if (frame.Length < 4 || frame[0] != 0x51)
+                    if (!CenturionFrameCodec.TryExtractPayload(frame, out byte reportId, out byte? deviceAddress, out byte[] payload))
                     {
                         continue;
                     }
 
-                    int cplLength = frame[1];
-                    if (cplLength < 1)
+                    if (reportId == CENTURION_ADDRESSED_REPORT_ID && _centurionDeviceAddress == null)
                     {
-                        continue;
+                        _centurionDeviceAddress = deviceAddress;
                     }
 
-                    int payloadLength = Math.Min(cplLength - 1, frame.Length - 3);
-                    if (payloadLength <= 0)
-                    {
-                        continue;
-                    }
-
-                    return frame[3..(3 + payloadLength)];
+                    return payload;
                 }
                 catch (OperationCanceledException)
                 {
@@ -826,12 +937,63 @@ namespace LGSTrayHID
             Hidpp20 ret = await WriteRead20(_devShort, buffer, timeout, ignoreHIDPP10);
             if (ret.Length == 0 || ret.GetFeatureIndex() == 0x8F)
             {
+                RecordPing(deviceId, false);
                 return false;
             }
 
-            return ret.GetFeatureIndex() == 0x00
+            bool success = ret.GetFeatureIndex() == 0x00
                 && ret.GetSoftwareId() == SW_ID
                 && ret.GetParam(2) == pingPayload;
+            RecordPing(deviceId, success);
+            return success;
+        }
+
+        internal void RecordDeviceDiscovery(
+            string deviceIndex,
+            string deviceName,
+            DeviceType deviceType,
+            string identifier,
+            IReadOnlyDictionary<ushort, byte> featureMap,
+            string? selectedBatteryFeature,
+            string? lastBatteryResponse,
+            HidppDeviceIdentity? identity = null
+        )
+        {
+            DeviceDiscoveryDiagnostic deviceDiagnostic = new()
+            {
+                DeviceIndex = deviceIndex,
+                DeviceName = deviceName,
+                DeviceType = deviceType.ToString(),
+                Identifier = identifier,
+                Identity = identity?.ToDiagnostic(),
+                FeatureMap = NativeDiagnosticsStore.FormatFeatureMap(featureMap),
+                SelectedBatteryFeature = selectedBatteryFeature,
+                LastBatteryResponse = lastBatteryResponse,
+            };
+
+            NativeDiagnosticsStore.UpdateSession(_diagnostics, x =>
+            {
+                x.Devices.RemoveAll(y => y.Identifier == identifier);
+                x.Devices.Add(deviceDiagnostic);
+            });
+        }
+
+        private void RecordPing(byte deviceId, bool success)
+        {
+            NativeDiagnosticsStore.UpdateSession(_diagnostics, x =>
+                x.PingResults[NativeDiagnosticsStore.FormatHex(deviceId, 2)] = success);
+        }
+
+        private void AddFailure(string reason)
+        {
+            NativeDiagnosticsStore.UpdateSession(_diagnostics, x =>
+            {
+                if (!x.FailureReasons.Contains(reason))
+                {
+                    x.FailureReasons.Add(reason);
+                }
+            });
+            NativeDiagnosticsStore.AddEvent($"{NativeDiagnosticsStore.FormatHex(_shortEndpoint.ProductId, 4)}: {reason}");
         }
     }
 }

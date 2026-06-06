@@ -79,7 +79,11 @@ The native backend has been validated on:
 - `PRO X2 SUPERSTRIKE Wireless Mouse`
 - `PRO X 2 Lightspeed Gaming Headset`
 
-Other Logitech HID++ devices may work if they expose supported battery features (`0x1000`, `0x1001`, `0x1004`) through compatible HID++ endpoints.
+The native backend includes explicit headset recognition for G533, G535, G733, G935, and PRO X Wireless headset product ids. G733-style headsets use `0x1F20 ADC MEASUREMENT` battery data when available.
+
+G522 LIGHTSPEED support is implemented for Centurion `0x50` transport and `0x0104` battery reads, but has not been validated with physical G522 hardware in this release.
+
+Other Logitech HID++ devices may work if they expose supported battery features (`0x1000`, `0x1001`, `0x1004`, `0x1F20`) through compatible HID++ endpoints.
 
 ## Install
 
