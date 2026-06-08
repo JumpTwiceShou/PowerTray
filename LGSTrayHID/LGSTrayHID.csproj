@@ -14,7 +14,7 @@
     <PublishSingleFile>false</PublishSingleFile>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>PowerTrayHID</AssemblyName>
-    <VersionPrefix>1.2.1</VersionPrefix>
+    <VersionPrefix>1.2.2</VersionPrefix>
   </PropertyGroup>
 
   <ItemGroup>

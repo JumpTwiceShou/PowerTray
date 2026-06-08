@@ -121,10 +121,21 @@ namespace LGSTrayCore.Managers
                 cancellationToken
             );
 
+            var sub3 = await _subscriber.SubscribeAsync(
+                IPCMessageType.OFFLINE,
+                x =>
+                {
+                    var offlineMessage = (DeviceOfflineMessage)x;
+                    _deviceEventBus.Publish(offlineMessage);
+                },
+                cancellationToken
+            );
+
             _diposeSubs = async () =>
             {
                 await sub1.DisposeAsync();
                 await sub2.DisposeAsync();
+                await sub3.DisposeAsync();
             };
 
             _ = Task.Run(async () =>

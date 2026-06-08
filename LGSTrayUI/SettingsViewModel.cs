@@ -108,6 +108,16 @@ public sealed partial class SettingsViewModel : ObservableObject
         }
     }
 
+    public bool AutoCheckUpdates
+    {
+        get => _settings.AutoCheckUpdates;
+        set
+        {
+            _settings.AutoCheckUpdates = value;
+            RefreshBindings();
+        }
+    }
+
     public bool NumericDisplay
     {
         get => _settings.NumericDisplay;
@@ -408,6 +418,7 @@ public sealed partial class SettingsViewModel : ObservableObject
             ["language"] = Language,
             ["theme"] = ThemeMode,
             ["numericDisplay"] = NumericDisplay,
+            ["autoCheckUpdates"] = AutoCheckUpdates,
             ["alertSummary"] = _settings.ExportSettingsSummary(),
         };
     }

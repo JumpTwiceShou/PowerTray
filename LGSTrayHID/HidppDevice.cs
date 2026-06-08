@@ -233,6 +233,19 @@ namespace LGSTrayHID
                 _ => null
             };
 
+            _parent.RecordDeviceDiscovery(
+                $"0x{_deviceIdx:X2}",
+                DeviceName,
+                (DeviceType)DeviceType,
+                Identifier,
+                _featureMap,
+                GetSelectedBatteryFeature(),
+                null,
+                _identity
+            );
+
+            SignalOnline();
+
             BatteryUpdateReturn? initialBattery = null;
             if (_getBatteryAsync != null)
             {
@@ -249,34 +262,34 @@ namespace LGSTrayHID
                         "batteryReadFailed",
                         _identity
                     );
-                    return;
                 }
             }
 
-            _parent.RecordDeviceDiscovery(
-                $"0x{_deviceIdx:X2}",
-                DeviceName,
-                (DeviceType)DeviceType,
-                Identifier,
-                _featureMap,
-                GetSelectedBatteryFeature(),
-                initialBattery?.batteryPercentage.ToString("0.##"),
-                _identity
-            );
-
-            HidppManagerContext.Instance.SignalDeviceEvent(
-                IPCMessageType.INIT,
-                new InitMessage(Identifier, DeviceName, _getBatteryAsync != null, (DeviceType)DeviceType)
-            );
-
             if (initialBattery.HasValue)
             {
+                _parent.RecordDeviceDiscovery(
+                    $"0x{_deviceIdx:X2}",
+                    DeviceName,
+                    (DeviceType)DeviceType,
+                    Identifier,
+                    _featureMap,
+                    GetSelectedBatteryFeature(),
+                    initialBattery.Value.batteryPercentage.ToString("0.##"),
+                    _identity
+                );
                 SignalBatteryUpdate(initialBattery.Value, true);
             }
+
+            bool delayFirstBatteryRetry = _getBatteryAsync != null && !initialBattery.HasValue;
 
             _ = Task.Run(async () =>
             {
                 if (_getBatteryAsync == null) { return; }
+
+                if (delayFirstBatteryRetry)
+                {
+                    await Task.Delay(1000);
+                }
 
                 while (true)
                 {
@@ -356,7 +369,21 @@ namespace LGSTrayHID
             );
         }
 
-        private void SignalOffline()
+        internal void SignalOnline()
+        {
+            if (string.IsNullOrWhiteSpace(Identifier))
+            {
+                return;
+            }
+
+            _offlineSignalled = false;
+            HidppManagerContext.Instance.SignalDeviceEvent(
+                IPCMessageType.INIT,
+                new InitMessage(Identifier, DeviceName, _getBatteryAsync != null, (DeviceType)DeviceType)
+            );
+        }
+
+        internal void SignalOffline()
         {
             if (_offlineSignalled)
             {

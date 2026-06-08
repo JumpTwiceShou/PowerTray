@@ -91,6 +91,22 @@ namespace LGSTrayUI
             }
         }
 
+        public bool AutoCheckUpdates
+        {
+            get => _settings.AutoCheckUpdates;
+            set
+            {
+                if (_settings.AutoCheckUpdates == value)
+                {
+                    return;
+                }
+
+                _settings.AutoCheckUpdates = value;
+                Save();
+                OnPropertyChanged();
+            }
+        }
+
         public int DefaultThresholdPercent
         {
             get => _settings.GlobalAlerts.ThresholdPercent;

@@ -196,6 +196,7 @@ namespace LGSTrayUI
         {
             _presenceCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             _ = Task.Run(() => PresenceLoopAsync(_presenceCts.Token), CancellationToken.None);
+            _ = Task.Run(() => AutoCheckForUpdatesAsync(_presenceCts.Token), CancellationToken.None);
             return Task.CompletedTask;
         }
 
@@ -219,6 +220,19 @@ namespace LGSTrayUI
                 }
                 catch (OperationCanceledException) { }
             }
+        }
+
+        private async Task AutoCheckForUpdatesAsync(CancellationToken cancellationToken)
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken);
+                if (_userSettings.AutoCheckUpdates)
+                {
+                    await _updateService.CheckForUpdatesAsync(showAlreadyLatest: false, showFailures: false);
+                }
+            }
+            catch (OperationCanceledException) { }
         }
     }
 }

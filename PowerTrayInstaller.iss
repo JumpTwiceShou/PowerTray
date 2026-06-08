@@ -11,7 +11,7 @@
 #endif
 
 #ifndef AppVersion
-  #define AppVersion "1.2.1"
+  #define AppVersion "1.2.2"
 #endif
 
 #ifndef IncludeRuntime
@@ -49,13 +49,16 @@ Name: "chinesesimp"; MessagesFile: "PowerTrayInstaller\ChineseSimplified.isl"
 [CustomMessages]
 english.StartWithWindows=Start with Windows
 chinesesimp.StartWithWindows=开机自启动
+english.AutoCheckUpdates=Automatically check for updates
+chinesesimp.AutoCheckUpdates=自动检查更新
 english.LaunchAfterInstall=Launch PowerTray after installation
 chinesesimp.LaunchAfterInstall=安装完成后启动 PowerTray
 english.MissingRuntimeMessage=PowerTray requires Microsoft .NET 8 Desktop Runtime x64, including Microsoft.NETCore.App 8.x and Microsoft.WindowsDesktop.App 8.x. The download page will open now. Install the runtime, then run this setup again.
 chinesesimp.MissingRuntimeMessage=PowerTray 需要 Microsoft .NET 8 Desktop Runtime x64，并且必须包含 Microsoft.NETCore.App 8.x 和 Microsoft.WindowsDesktop.App 8.x。现在会打开下载页面。请先安装运行时，然后重新运行此安装程序。
 
 [Tasks]
-Name: "autostart"; Description: "{cm:StartWithWindows}"; Flags: unchecked
+Name: "autostart"; Description: "{cm:StartWithWindows}"
+Name: "checkupdates"; Description: "{cm:AutoCheckUpdates}"
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -231,6 +234,7 @@ begin
     '  "ThemeMode": "system",' + #13#10 +
     '  "NumericDisplay": false,' + #13#10 +
     '  "AutoStart": ' + BoolJson(WizardIsTaskSelected('autostart')) + ',' + #13#10 +
+    '  "AutoCheckUpdates": ' + BoolJson(WizardIsTaskSelected('checkupdates')) + ',' + #13#10 +
     '  "SelectedDevices": [],' + #13#10 +
     '  "GlobalAlerts": {' + #13#10 +
     '    "ThresholdPercent": 15,' + #13#10 +

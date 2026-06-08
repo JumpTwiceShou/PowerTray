@@ -10,6 +10,7 @@ public sealed class PowerTrayUserSettings
     public string ThemeMode { get; set; } = "system";
     public bool NumericDisplay { get; set; }
     public bool AutoStart { get; set; }
+    public bool AutoCheckUpdates { get; set; } = true;
     public List<string> SelectedDevices { get; set; } = [];
     public AlertDefaults GlobalAlerts { get; set; } = new();
     public Dictionary<string, DeviceAlertSettings> Devices { get; set; } = [];

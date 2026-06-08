@@ -11,6 +11,7 @@ namespace LGSTrayHID
     public sealed class HidppManagerContext
     {
         private const ushort LOGITECH_VENDOR_ID = 0x046D;
+        private static readonly int[] HotplugArrivalRediscoverDelaysMs = [50, 300, 1000];
 
         public static readonly HidppManagerContext _instance = new();
         public static HidppManagerContext Instance => _instance;
@@ -18,10 +19,12 @@ namespace LGSTrayHID
         private readonly object _sync = new();
         private readonly List<HidppDevices> _sessions = [];
         private readonly HidApiHotPlugEventCallbackFn _hotplugCallback;
+        private readonly SemaphoreSlim _rediscoverLock = new(1, 1);
 
         private CancellationToken _cancellationToken;
         private HidHotPlugCallbackHandle _hotplugHandle;
         private int _rediscoverQueued;
+        private int _hotplugArrivalRediscoverQueued;
 
         public delegate void HidppDeviceEventHandler(IPCMessageType messageType, IPCMessage message);
 
@@ -42,9 +45,25 @@ namespace LGSTrayHID
             HidppDeviceEvent?.Invoke(messageType, message);
         }
 
-        private unsafe int HotplugEvent(HidHotPlugCallbackHandle _, HidDeviceInfo* __, HidApiHotPlugEvent ___, nint ____)
+        private unsafe int HotplugEvent(HidHotPlugCallbackHandle _, HidDeviceInfo* device, HidApiHotPlugEvent hotplugEvent, nint __)
         {
-            ScheduleRediscover();
+            bool deviceArrived = (hotplugEvent & HidApiHotPlugEvent.HID_API_HOTPLUG_EVENT_DEVICE_ARRIVED) != 0;
+            if ((hotplugEvent & HidApiHotPlugEvent.HID_API_HOTPLUG_EVENT_DEVICE_LEFT) != 0 && device != null)
+            {
+                HidDeviceInfo deviceInfo = *device;
+                string pathHash = NativeDiagnosticsStore.HashForDiagnostics(deviceInfo.GetPath());
+                SignalSessionsOfflineForEndpoint(pathHash, "hotplugLeft");
+            }
+
+            if (deviceArrived)
+            {
+                ScheduleHotplugArrivalRediscover();
+            }
+            else
+            {
+                ScheduleRediscover(250);
+            }
+
             return 0;
         }
 
@@ -89,7 +108,7 @@ namespace LGSTrayHID
             }
         }
 
-        private void ScheduleRediscover()
+        private void ScheduleRediscover(int delayMs = 1000)
         {
             if (_cancellationToken.IsCancellationRequested)
             {
@@ -105,7 +124,7 @@ namespace LGSTrayHID
             {
                 try
                 {
-                    await Task.Delay(1000, _cancellationToken);
+                    await Task.Delay(delayMs, _cancellationToken);
                     RediscoverDevices();
                 }
                 catch (OperationCanceledException) { }
@@ -116,6 +135,60 @@ namespace LGSTrayHID
             });
         }
 
+        private void ScheduleHotplugArrivalRediscover()
+        {
+            if (_cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+
+            if (Interlocked.Exchange(ref _hotplugArrivalRediscoverQueued, 1) == 1)
+            {
+                return;
+            }
+
+            NativeDiagnosticsStore.AddEvent("Hotplug arrival detected; scheduling fast rediscover burst");
+
+            _ = Task.Run(async () =>
+            {
+                int previousDelayMs = 0;
+                try
+                {
+                    foreach (int delayMs in HotplugArrivalRediscoverDelaysMs)
+                    {
+                        int waitMs = Math.Max(0, delayMs - previousDelayMs);
+                        previousDelayMs = delayMs;
+                        await Task.Delay(waitMs, _cancellationToken);
+                        RediscoverDevices();
+                    }
+                }
+                catch (OperationCanceledException) { }
+                finally
+                {
+                    Interlocked.Exchange(ref _hotplugArrivalRediscoverQueued, 0);
+                }
+            });
+        }
+
+        private void SignalSessionsOfflineForEndpoint(string pathHash, string reason)
+        {
+            if (string.IsNullOrWhiteSpace(pathHash))
+            {
+                return;
+            }
+
+            lock (_sync)
+            {
+                foreach (var session in _sessions)
+                {
+                    if (session.MatchesEndpointPathHash(pathHash))
+                    {
+                        session.SignalKnownDevicesOffline(reason);
+                    }
+                }
+            }
+        }
+
         public void RediscoverDevices()
         {
             if (_cancellationToken.IsCancellationRequested)
@@ -123,51 +196,84 @@ namespace LGSTrayHID
                 return;
             }
 
-            IReadOnlyCollection<HidEndpointInfo> endpoints = EnumerateEndpoints();
-            NativeDiagnosticsStore.BeginDiscovery(endpoints);
-            var nextSessions = CreateSessions(endpoints);
-
-            lock (_sync)
+            if (!_rediscoverLock.Wait(0))
             {
-                foreach (var session in _sessions)
-                {
-                    session.Dispose();
-                }
-
-                _sessions.Clear();
-                _sessions.AddRange(nextSessions);
+                NativeDiagnosticsStore.AddEvent("Rediscover skipped; discovery already running");
+                return;
             }
 
-            _ = Task.Run(async () =>
+            try
             {
-                foreach (var session in nextSessions)
+                IReadOnlyCollection<HidEndpointInfo> endpoints = EnumerateEndpoints();
+                NativeDiagnosticsStore.BeginDiscovery(endpoints);
+                var nextSessions = CreateSessions(endpoints);
+                HashSet<string> nextSessionKeys = nextSessions
+                    .Select(x => x.EndpointIdentityKey)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                lock (_sync)
                 {
-                    if (_cancellationToken.IsCancellationRequested)
+                    foreach (var session in _sessions)
                     {
-                        return;
+                        if (!nextSessionKeys.Contains(session.EndpointIdentityKey))
+                        {
+                            session.SignalKnownDevicesOffline("endpointRemoved");
+                        }
+
+                        session.Dispose();
                     }
 
-                    await session.StartAsync();
-
-                    try
-                    {
-                        await Task.Delay(150, _cancellationToken);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        return;
-                    }
+                    _sessions.Clear();
+                    _sessions.AddRange(nextSessions);
                 }
 
-                SignalDeviceEvent(
-                    IPCMessageType.NATIVE_DIAGNOSTICS_RESPONSE,
-                    new NativeDiagnosticsResponseMessage(
-                        NativeDiagnosticsResponseMessage.LatestSnapshotRequestId,
-                        NativeDiagnosticsStore.GetJson(),
-                        NativeDiagnosticsStore.GetSummary()
-                    )
-                );
-            });
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        foreach (var session in nextSessions)
+                        {
+                            if (_cancellationToken.IsCancellationRequested)
+                            {
+                                return;
+                            }
+
+                            await session.StartAsync();
+
+                            try
+                            {
+                                await Task.Delay(150, _cancellationToken);
+                            }
+                            catch (OperationCanceledException)
+                            {
+                                return;
+                            }
+                        }
+
+                        SignalDeviceEvent(
+                            IPCMessageType.NATIVE_DIAGNOSTICS_RESPONSE,
+                            new NativeDiagnosticsResponseMessage(
+                                NativeDiagnosticsResponseMessage.LatestSnapshotRequestId,
+                                NativeDiagnosticsStore.GetJson(),
+                                NativeDiagnosticsStore.GetSummary()
+                            )
+                        );
+                    }
+                    catch (Exception ex)
+                    {
+                        NativeDiagnosticsStore.AddEvent($"Rediscover failed: {ex.GetType().Name}");
+                    }
+                    finally
+                    {
+                        _rediscoverLock.Release();
+                    }
+                });
+            }
+            catch
+            {
+                _rediscoverLock.Release();
+                throw;
+            }
         }
 
         private static List<HidppDevices> CreateSessions(IReadOnlyCollection<HidEndpointInfo> endpoints)

@@ -433,6 +433,7 @@
                                     <ComboBoxItem Tag="dark" Content="{Binding Loc[ThemeDark]}"/>
                                 </ComboBox>
                                 <CheckBox Content="{Binding Loc[StartWithWindows]}" IsChecked="{Binding AutoStart}"/>
+                                <CheckBox Content="{Binding Loc[AutoCheckUpdates]}" IsChecked="{Binding AutoCheckUpdates}"/>
                                 <CheckBox Content="{Binding Loc[NumericIcon]}" IsChecked="{Binding NumericDisplay}"/>
                             </StackPanel>
                         </Border>

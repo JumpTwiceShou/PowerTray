@@ -28,7 +28,12 @@ public sealed class UpdateService
         _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("PowerTray.NativeBattery");
     }
 
-    public async Task CheckForUpdatesAsync()
+    public Task CheckForUpdatesAsync()
+    {
+        return CheckForUpdatesAsync(showAlreadyLatest: true, showFailures: true);
+    }
+
+    public async Task CheckForUpdatesAsync(bool showAlreadyLatest, bool showFailures)
     {
         try
         {
@@ -38,7 +43,11 @@ public sealed class UpdateService
 
             if (latest <= current)
             {
-                ShowMessage(_loc["AlreadyLatest"], _loc["MenuCheckUpdates"]);
+                if (showAlreadyLatest)
+                {
+                    ShowMessage(_loc["AlreadyLatest"], _loc["MenuCheckUpdates"]);
+                }
+
                 return;
             }
 
@@ -47,7 +56,24 @@ public sealed class UpdateService
 
             if (installer == null || string.IsNullOrWhiteSpace(installer.BrowserDownloadUrl))
             {
-                ShowMessage(_loc["NoInstallerAsset"], _loc["UpdateCheckFailed"]);
+                if (showFailures)
+                {
+                    ShowMessage(_loc["NoInstallerAsset"], _loc["UpdateCheckFailed"]);
+                }
+
+                return;
+            }
+
+            string downloadChoice = ShowOptions(
+                string.Format(_loc["UpdateAvailableBody"], latest),
+                _loc["UpdateAvailableTitle"],
+                [
+                    new(_loc["DownloadUpdate"], "download", IsDefault: true),
+                    new(_loc["Cancel"], "cancel", IsCancel: true),
+                ]);
+
+            if (downloadChoice != "download")
+            {
                 return;
             }
 
@@ -72,7 +98,10 @@ public sealed class UpdateService
         }
         catch (Exception ex)
         {
-            ShowMessage($"{_loc["UpdateCheckFailed"]}\n\n{ex.Message}", _loc["MenuCheckUpdates"]);
+            if (showFailures)
+            {
+                ShowMessage($"{_loc["UpdateCheckFailed"]}\n\n{ex.Message}", _loc["MenuCheckUpdates"]);
+            }
         }
     }
 
