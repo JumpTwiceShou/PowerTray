@@ -138,19 +138,36 @@ namespace LGSTrayHID
                 _sessions.AddRange(nextSessions);
             }
 
-            foreach (var session in nextSessions)
+            _ = Task.Run(async () =>
             {
-                _ = session.StartAsync();
-            }
+                foreach (var session in nextSessions)
+                {
+                    if (_cancellationToken.IsCancellationRequested)
+                    {
+                        return;
+                    }
 
-            SignalDeviceEvent(
-                IPCMessageType.NATIVE_DIAGNOSTICS_RESPONSE,
-                new NativeDiagnosticsResponseMessage(
-                    NativeDiagnosticsResponseMessage.LatestSnapshotRequestId,
-                    NativeDiagnosticsStore.GetJson(),
-                    NativeDiagnosticsStore.GetSummary()
-                )
-            );
+                    await session.StartAsync();
+
+                    try
+                    {
+                        await Task.Delay(150, _cancellationToken);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        return;
+                    }
+                }
+
+                SignalDeviceEvent(
+                    IPCMessageType.NATIVE_DIAGNOSTICS_RESPONSE,
+                    new NativeDiagnosticsResponseMessage(
+                        NativeDiagnosticsResponseMessage.LatestSnapshotRequestId,
+                        NativeDiagnosticsStore.GetJson(),
+                        NativeDiagnosticsStore.GetSummary()
+                    )
+                );
+            });
         }
 
         private static List<HidppDevices> CreateSessions(IReadOnlyCollection<HidEndpointInfo> endpoints)

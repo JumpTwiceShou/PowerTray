@@ -15,6 +15,11 @@ namespace LGSTrayHID
 
         private const int READ_TIMEOUT = 100;
         private const int DEFAULT_COMMAND_TIMEOUT = 250;
+        private const int C54D_COMMAND_TIMEOUT = 600;
+        private const int C54D_COMMAND_ATTEMPTS = 4;
+        private const int DEFAULT_COMMAND_ATTEMPTS = 2;
+        private const int COMMAND_RETRY_DELAY_MS = 40;
+        private const ushort LIGHTSPEED_C54D_RECEIVER = 0xC54D;
         private const byte CENTURION_REPORT_ID = CenturionFrameCodec.ReportId;
         private const byte CENTURION_ADDRESSED_REPORT_ID = CenturionFrameCodec.AddressedReportId;
 
@@ -22,6 +27,8 @@ namespace LGSTrayHID
         private readonly HidEndpointInfo? _longEndpoint;
         private readonly DiscoverySessionDiagnostic _diagnostics;
         private readonly Dictionary<ushort, HidppDevice> _deviceCollection = [];
+        private readonly object _handleSync = new();
+        private readonly HashSet<nint> _closedHandles = [];
         private readonly SemaphoreSlim _commandSemaphore = new(1, 1);
         private readonly Channel<byte[]> _channel = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(64)
         {
@@ -64,6 +71,11 @@ namespace LGSTrayHID
         public async Task StartAsync()
         {
             if (Interlocked.Exchange(ref _started, 1) == 1)
+            {
+                return;
+            }
+
+            if (Disposed)
             {
                 return;
             }
@@ -158,7 +170,7 @@ namespace LGSTrayHID
             }
             finally
             {
-                HidClose(dev);
+                CloseEndpoint(dev);
             }
         }
 
@@ -875,7 +887,11 @@ namespace LGSTrayHID
             }
 
             byte[] request = (byte[])buffer;
-            bool locked = await _commandSemaphore.WaitAsync(timeout);
+            bool targetsShortEndpoint = (nint)hidDevicePtr == (nint)_devShort;
+            bool c54dShortRequest = ShouldUseC54dRecovery(targetsShortEndpoint, request, buffer);
+            int commandTimeout = c54dShortRequest ? Math.Max(timeout, C54D_COMMAND_TIMEOUT) : timeout;
+            int attempts = c54dShortRequest ? C54D_COMMAND_ATTEMPTS : DEFAULT_COMMAND_ATTEMPTS;
+            bool locked = await _commandSemaphore.WaitAsync(commandTimeout);
             if (!locked)
             {
                 return (Hidpp20)Array.Empty<byte>();
@@ -883,37 +899,45 @@ namespace LGSTrayHID
 
             try
             {
-                await hidDevicePtr.WriteAsync(request);
-
-                using CancellationTokenSource cts = new(timeout);
-                while (!cts.IsCancellationRequested)
+                for (int attempt = 1; attempt <= attempts; attempt++)
                 {
-                    try
+                    HidDevicePtr writeDevice = targetsShortEndpoint ? _devShort : hidDevicePtr;
+                    int written = await writeDevice.WriteAsync(request);
+                    if (written <= 0)
                     {
-                        Hidpp20 ret = await _channel.Reader.ReadAsync(cts.Token);
-                        if (ret.Length < 4 || ret.GetDeviceIdx() != buffer.GetDeviceIdx())
+                        RecordTransportFailure("hidWriteFailed", request, attempt);
+                        if (targetsShortEndpoint)
                         {
-                            continue;
+                            ReopenShortEndpoint("hidWriteFailed");
                         }
 
-                        if (!ignoreHID10 && ret.GetFeatureIndex() == 0x8F)
+                        await DelayBeforeRetry(attempt);
+                        continue;
+                    }
+
+                    Hidpp20 ret = await ReadMatchingHidpp20Async(buffer, commandTimeout, ignoreHID10);
+                    if (ret.Length > 0)
+                    {
+                        return ret;
+                    }
+
+                    RecordTransportFailure("hidReadTimeout", request, attempt);
+
+                    if (c54dShortRequest)
+                    {
+                        ret = await TryC54dLongReportFallbackAsync(buffer, request, commandTimeout, ignoreHID10, attempt);
+                        if (ret.Length > 0)
                         {
                             return ret;
                         }
 
-                        if (ret.GetFeatureIndex() == buffer.GetFeatureIndex() && ret.GetSoftwareId() == SW_ID)
+                        if (attempt == 2)
                         {
-                            return ret;
+                            ReopenShortEndpoint("c54dTimeout");
                         }
                     }
-                    catch (OperationCanceledException)
-                    {
-                        break;
-                    }
-                    catch (ChannelClosedException)
-                    {
-                        break;
-                    }
+
+                    await DelayBeforeRetry(attempt);
                 }
 
                 return (Hidpp20)Array.Empty<byte>();
@@ -922,6 +946,167 @@ namespace LGSTrayHID
             {
                 _commandSemaphore.Release();
             }
+        }
+
+        private async Task<Hidpp20> ReadMatchingHidpp20Async(Hidpp20 buffer, int timeout, bool ignoreHID10)
+        {
+            using CancellationTokenSource cts = new(timeout);
+            while (!cts.IsCancellationRequested)
+            {
+                try
+                {
+                    Hidpp20 ret = await _channel.Reader.ReadAsync(cts.Token);
+                    if (ret.Length < 4 || ret.GetDeviceIdx() != buffer.GetDeviceIdx())
+                    {
+                        continue;
+                    }
+
+                    if (!ignoreHID10 && ret.GetFeatureIndex() == 0x8F)
+                    {
+                        return ret;
+                    }
+
+                    if (ret.GetFeatureIndex() == buffer.GetFeatureIndex() && ret.GetSoftwareId() == SW_ID)
+                    {
+                        return ret;
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                catch (ChannelClosedException)
+                {
+                    break;
+                }
+            }
+
+            return (Hidpp20)Array.Empty<byte>();
+        }
+
+        private bool ShouldUseC54dRecovery(bool targetsShortEndpoint, byte[] request, Hidpp20 buffer)
+        {
+            return targetsShortEndpoint
+                && _shortEndpoint.ProductId == LIGHTSPEED_C54D_RECEIVER
+                && _devLong != IntPtr.Zero
+                && request.Length == 7
+                && request[0] == 0x10
+                && buffer.GetDeviceIdx() != 0xFF;
+        }
+
+        private async Task<Hidpp20> TryC54dLongReportFallbackAsync(Hidpp20 buffer, byte[] shortRequest, int timeout, bool ignoreHID10, int attempt)
+        {
+            HidDevicePtr longDevice = _devLong;
+            if (longDevice == IntPtr.Zero)
+            {
+                return (Hidpp20)Array.Empty<byte>();
+            }
+
+            byte[] longRequest = CreateLongReport(shortRequest);
+            int written = await longDevice.WriteAsync(longRequest);
+            if (written <= 0)
+            {
+                RecordTransportFailure("hidLongWriteFailed", longRequest, attempt);
+                ReopenLongEndpoint("hidLongWriteFailed");
+                return (Hidpp20)Array.Empty<byte>();
+            }
+
+            Hidpp20 ret = await ReadMatchingHidpp20Async(buffer, timeout, ignoreHID10);
+            if (ret.Length == 0)
+            {
+                RecordTransportFailure("hidLongReadTimeout", longRequest, attempt);
+            }
+
+            return ret;
+        }
+
+        private static byte[] CreateLongReport(byte[] shortRequest)
+        {
+            byte[] longRequest = new byte[20];
+            longRequest[0] = 0x11;
+            Array.Copy(shortRequest, 1, longRequest, 1, shortRequest.Length - 1);
+            return longRequest;
+        }
+
+        private static async Task DelayBeforeRetry(int attempt)
+        {
+            await Task.Delay(COMMAND_RETRY_DELAY_MS * attempt);
+        }
+
+        private void ReopenShortEndpoint(string reason)
+        {
+            HidDevicePtr reopened = OpenEndpoint(_shortEndpoint);
+            if (reopened == IntPtr.Zero)
+            {
+                AddFailure("reopenShortFailed");
+                return;
+            }
+
+            lock (_handleSync)
+            {
+                _devShort = reopened;
+            }
+
+            if (_readCts != null)
+            {
+                StartReadThread(reopened, _readCts.Token);
+            }
+
+            NativeDiagnosticsStore.AddEvent($"{NativeDiagnosticsStore.FormatHex(_shortEndpoint.ProductId, 4)}: reopened short endpoint after {reason}");
+        }
+
+        private void ReopenLongEndpoint(string reason)
+        {
+            if (_longEndpoint == null)
+            {
+                return;
+            }
+
+            HidDevicePtr reopened = OpenEndpoint(_longEndpoint);
+            if (reopened == IntPtr.Zero)
+            {
+                AddFailure("reopenLongFailed");
+                return;
+            }
+
+            lock (_handleSync)
+            {
+                _devLong = reopened;
+            }
+
+            if (_readCts != null)
+            {
+                StartReadThread(reopened, _readCts.Token);
+            }
+
+            NativeDiagnosticsStore.AddEvent($"{NativeDiagnosticsStore.FormatHex(_shortEndpoint.ProductId, 4)}: reopened long endpoint after {reason}");
+        }
+
+        private void CloseEndpoint(HidDevicePtr dev)
+        {
+            nint raw = dev;
+            if (raw == IntPtr.Zero)
+            {
+                return;
+            }
+
+            lock (_handleSync)
+            {
+                if (!_closedHandles.Add(raw))
+                {
+                    return;
+                }
+            }
+
+            HidClose(raw);
+        }
+
+        private void RecordTransportFailure(string reason, byte[] request, int attempt)
+        {
+            AddFailure(reason);
+            NativeDiagnosticsStore.AddEvent(
+                $"{NativeDiagnosticsStore.FormatHex(_shortEndpoint.ProductId, 4)}: {reason} attempt={attempt} request={NativeDiagnosticsStore.FormatBytes(request)}"
+            );
         }
 
         public async Task<bool> Ping20(byte deviceId, int timeout = DEFAULT_COMMAND_TIMEOUT, bool ignoreHIDPP10 = true)
