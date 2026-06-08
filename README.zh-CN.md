@@ -11,15 +11,15 @@
 
 ---
 
-PowerTray 是基于 [andyvorld/LGSTrayBattery](https://github.com/andyvorld/LGSTrayBattery) 进行 vibe 修改和优化的项目。它保留了原项目的托盘电量监控思路、HTTP 兼容接口和 HID++ 方向，但改造成不依赖 Logitech G Hub 后端的 native-only 罗技设备电量托盘工具。
+PowerTray 是基于 [andyvorld/LGSTrayBattery](https://github.com/andyvorld/LGSTrayBattery) 改造的罗技设备电量托盘工具。它保留了原项目的托盘电量监控思路、HTTP 兼容接口和 HID++ 方向，同时移除了对 Logitech G Hub 后端的依赖。
 
 ## 功能亮点
 
 - 通过 `hidapi` 直接读取 Logitech HID++ 电量。
 - 不依赖 `lghub_agent.exe` 或 `ws://localhost:9010`。
-- 可为已选择设备显示独立托盘图标，支持鼠标/耳机图标和数字电量图标。
-- 每个设备可单独设置低电量阈值、Windows 通知、托盘闪烁、别名和暂停提醒。
-- 支持静音时段，以及当前台存在全屏软件时暂停 Windows 通知。
+- 可为已选择设备显示独立托盘图标，支持鼠标/耳机图标和数字电量显示。
+- 每个设备可单独设置低电量阈值、系统通知、托盘闪烁、自定义名称和暂停提醒。
+- 支持静音时段，以及全屏应用运行时暂停系统通知。
 - 应用和安装器支持英文/简体中文，默认英文。
 - 提供单 EXE Windows x64 安装器，可选择是否开机自启。
 - 保留兼容 HTTP API：`/devices` 和 `/device/{id}` XML。
@@ -70,16 +70,16 @@ PowerTray 是基于 [andyvorld/LGSTrayBattery](https://github.com/andyvorld/LGST
 
 ## 当前设备覆盖
 
-native 后端已验证：
+原生后端已验证：
 
 - `PRO X2 SUPERSTRIKE Wireless Mouse`
 - `PRO X 2 Lightspeed Gaming Headset`
 
-native 后端已显式识别 G533、G535、G733、G935 和 PRO X Wireless 耳机产品 id。G733 这类耳机在可用时通过 `0x1F20 ADC MEASUREMENT` 读取电量。
+原生后端已显式识别 G533、G535、G733、G935 和 PRO X Wireless 耳机产品 ID。G733 这类耳机在可用时通过 `0x1F20 ADC MEASUREMENT` 读取电量。
 
 G522 LIGHTSPEED 已实现 Centurion `0x50` 传输和 `0x0104` 电量读取，但此版本没有用 G522 实机验证。
 
-其他 Logitech HID++ 设备如果通过兼容 HID++ endpoint 暴露受支持的电量 feature（`0x1000`、`0x1001`、`0x1004`、`0x1F20`），也可能可用。
+其他 Logitech HID++ 设备如果通过兼容 HID++ 端点暴露受支持的电量功能（`0x1000`、`0x1001`、`0x1004`、`0x1F20`），也可能可用。
 
 ## 安装
 
@@ -102,9 +102,9 @@ G522 LIGHTSPEED 已实现 Centurion `0x50` 传输和 `0x0104` 电量读取，但
 
 设置窗口包含：
 
-- 常规：语言、开机自启、数字电量图标。
-- 提醒：全局低电量默认值、静音时段、全屏软件前台时暂停 Windows 通知。
-- 设备：每设备别名、低电量阈值、通知、托盘闪烁、暂停提醒、测试通知、测试闪烁。
+- 常规：语言、开机自启、自动检查更新、托盘图标显示电量百分比。
+- 提醒：默认低电量提醒设置、静音时段、全屏应用运行时暂停系统通知。
+- 设备：自定义设备名称、低电量阈值、系统通知、托盘闪烁提醒、暂停提醒、测试通知、测试托盘闪烁。
 - 诊断：G Hub 进程状态、`localhost:9010` 可达性、设备更新时间、提醒配置摘要和诊断导出。
 
 设备别名只影响界面和通知。HTTP XML API 仍输出罗技原始设备名。
@@ -138,7 +138,7 @@ XML 示例：
 </xml>
 ```
 
-Native 模式没有 G Hub 的 mileage 数据，因此 `mileage` 返回 `-1.00`。
+原生模式没有 G Hub 的 mileage 数据，因此 `mileage` 返回 `-1.00`。
 
 ## 构建
 

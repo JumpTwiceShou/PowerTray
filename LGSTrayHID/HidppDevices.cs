@@ -442,7 +442,14 @@ namespace LGSTrayHID
             string? serial = await ReadCenturionSerialAsync(features, request);
             if (!HidppDeviceIdentity.IsMeaningfulTextIdentifier(serial))
             {
-                serial = $"fallback-{_shortEndpoint.ProductId:X4}-{_shortEndpoint.InterfaceNumber}-{_shortEndpoint.PathHash}";
+                serial = HidppDeviceIdentity.CreateStableFallbackIdentifier(
+                    $"fallback-{_shortEndpoint.ProductId:X4}",
+                    _shortEndpoint.ProductId.ToString("X4"),
+                    _shortEndpoint.InterfaceNumber.ToString(),
+                    _centurionReportId.ToString("X2"),
+                    _centurionDeviceAddress?.ToString("X2"),
+                    name
+                );
             }
             string deviceId = $"centurion-{serial}";
             bool hasBattery = features.ContainsKey(0x0104);

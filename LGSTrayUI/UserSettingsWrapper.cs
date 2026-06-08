@@ -18,6 +18,7 @@ namespace LGSTrayUI
         };
 
         private readonly PowerTrayUserSettings _settings;
+        private readonly HashSet<string> _pausedUntilNextLaunch = [];
 
         public UserSettingsWrapper()
         {
@@ -279,6 +280,13 @@ namespace LGSTrayUI
         public DateTimeOffset? GetPauseUntil(string deviceId) =>
             GetDeviceSettings(deviceId).PauseUntil;
 
+        public bool IsPausedUntilNextLaunch(string deviceId) =>
+            _pausedUntilNextLaunch.Contains(deviceId);
+
+        public bool IsDevicePaused(string deviceId, DateTimeOffset now) =>
+            IsPausedUntilNextLaunch(deviceId) ||
+            (GetPauseUntil(deviceId) is { } pauseUntil && pauseUntil > now);
+
         public void SetDeviceAlias(string deviceId, string alias)
         {
             GetDeviceSettings(deviceId).Alias = alias.Trim();
@@ -305,8 +313,105 @@ namespace LGSTrayUI
 
         public void SetDevicePauseUntil(string deviceId, DateTimeOffset? pauseUntil)
         {
+            _pausedUntilNextLaunch.Remove(deviceId);
             GetDeviceSettings(deviceId).PauseUntil = pauseUntil;
             SaveDevice(deviceId);
+        }
+
+        public void SetDevicePauseUntilNextLaunch(string deviceId)
+        {
+            GetDeviceSettings(deviceId).PauseUntil = null;
+            _pausedUntilNextLaunch.Add(deviceId);
+            SaveDevice(deviceId);
+        }
+
+        public bool MigrateDeviceId(string oldDeviceId, string newDeviceId, string deviceName)
+        {
+            if (string.IsNullOrWhiteSpace(oldDeviceId) ||
+                string.IsNullOrWhiteSpace(newDeviceId) ||
+                oldDeviceId == newDeviceId)
+            {
+                return false;
+            }
+
+            bool changed = false;
+            bool wasSelected = _settings.SelectedDevices.Remove(oldDeviceId);
+            if (wasSelected && !_settings.SelectedDevices.Contains(newDeviceId))
+            {
+                _settings.SelectedDevices.Add(newDeviceId);
+                changed = true;
+            }
+            else
+            {
+                changed |= wasSelected;
+            }
+
+            if (_settings.Devices.TryGetValue(oldDeviceId, out DeviceAlertSettings? oldSettings))
+            {
+                if (_settings.Devices.TryGetValue(newDeviceId, out DeviceAlertSettings? newSettings))
+                {
+                    MergeDeviceSettings(newSettings, oldSettings);
+                }
+                else
+                {
+                    _settings.Devices[newDeviceId] = oldSettings;
+                }
+
+                _settings.Devices.Remove(oldDeviceId);
+                changed = true;
+            }
+
+            if (IsPersistableDeviceName(deviceName))
+            {
+                DeviceAlertSettings newDeviceSettings = GetDeviceSettings(newDeviceId);
+                if (newDeviceSettings.LastDeviceName != deviceName)
+                {
+                    newDeviceSettings.LastDeviceName = deviceName;
+                    changed = true;
+                }
+            }
+
+            if (_pausedUntilNextLaunch.Remove(oldDeviceId))
+            {
+                _pausedUntilNextLaunch.Add(newDeviceId);
+                changed = true;
+            }
+
+            if (!changed)
+            {
+                return false;
+            }
+
+            Save();
+            OnPropertyChanged(nameof(SelectedDevices));
+            OnDeviceSettingsChanged(oldDeviceId);
+            OnDeviceSettingsChanged(newDeviceId);
+            return true;
+        }
+
+        public void MigrateUnstableDeviceHistory(string canonicalDeviceId, string deviceName)
+        {
+            if (string.IsNullOrWhiteSpace(canonicalDeviceId) || !IsPersistableDeviceName(deviceName))
+            {
+                return;
+            }
+
+            string[] oldDeviceIds = _settings.Devices
+                .Where(x => x.Key != canonicalDeviceId)
+                .Where(x => ShouldMigrateHistoricalDeviceId(x.Key, canonicalDeviceId))
+                .Where(x => IsSameDeviceName(x.Value.LastDeviceName, deviceName))
+                .Select(x => x.Key)
+                .Concat(_settings.SelectedDevices
+                    .Where(x => x != canonicalDeviceId)
+                    .Where(x => !_settings.Devices.ContainsKey(x))
+                    .Where(x => ShouldMigrateSelectedDeviceIdWithoutHistory(x, canonicalDeviceId)))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            foreach (string oldDeviceId in oldDeviceIds)
+            {
+                MigrateDeviceId(oldDeviceId, canonicalDeviceId, deviceName);
+            }
         }
 
         public void RestoreDeviceDefaults(string deviceId)
@@ -333,6 +438,66 @@ namespace LGSTrayUI
         {
             Save();
             OnDeviceSettingsChanged(deviceId);
+        }
+
+        private static void MergeDeviceSettings(DeviceAlertSettings target, DeviceAlertSettings source)
+        {
+            if (string.IsNullOrWhiteSpace(target.Alias) && !string.IsNullOrWhiteSpace(source.Alias))
+            {
+                target.Alias = source.Alias;
+            }
+
+            if (string.IsNullOrWhiteSpace(target.LastDeviceName) && !string.IsNullOrWhiteSpace(source.LastDeviceName))
+            {
+                target.LastDeviceName = source.LastDeviceName;
+            }
+
+            target.ThresholdPercent ??= source.ThresholdPercent;
+            target.WindowsNotification ??= source.WindowsNotification;
+            target.TrayBlink ??= source.TrayBlink;
+            target.PauseUntil ??= source.PauseUntil;
+        }
+
+        private static bool IsUnstableHistoricalDeviceId(string deviceId) =>
+            deviceId.StartsWith("fallback-", StringComparison.OrdinalIgnoreCase) ||
+            deviceId.StartsWith("centurion-fallback-", StringComparison.OrdinalIgnoreCase) ||
+            deviceId.StartsWith("dev", StringComparison.OrdinalIgnoreCase);
+
+        private static bool ShouldMigrateHistoricalDeviceId(string oldDeviceId, string canonicalDeviceId) =>
+            IsUnstableHistoricalDeviceId(oldDeviceId) ||
+            GetDeviceIdStabilityScore(oldDeviceId) < GetDeviceIdStabilityScore(canonicalDeviceId);
+
+        private static bool ShouldMigrateSelectedDeviceIdWithoutHistory(string oldDeviceId, string canonicalDeviceId) =>
+            IsUnstableHistoricalDeviceId(oldDeviceId) &&
+            GetDeviceIdStabilityScore(oldDeviceId) < GetDeviceIdStabilityScore(canonicalDeviceId);
+
+        private static int GetDeviceIdStabilityScore(string deviceId)
+        {
+            if (IsUnstableHistoricalDeviceId(deviceId))
+            {
+                return 0;
+            }
+
+            if (deviceId.StartsWith("centurion-", StringComparison.OrdinalIgnoreCase))
+            {
+                return 3;
+            }
+
+            return deviceId.Contains('-', StringComparison.Ordinal)
+                ? 1
+                : deviceId.Length >= 12 ? 3 : 2;
+        }
+
+        private static bool IsSameDeviceName(string? left, string? right)
+        {
+            if (!IsPersistableDeviceName(left) || !IsPersistableDeviceName(right))
+            {
+                return false;
+            }
+
+            string leftName = left?.Trim() ?? string.Empty;
+            string rightName = right?.Trim() ?? string.Empty;
+            return string.Equals(leftName, rightName, StringComparison.OrdinalIgnoreCase);
         }
 
         private void OnDeviceSettingsChanged(string deviceId = "")

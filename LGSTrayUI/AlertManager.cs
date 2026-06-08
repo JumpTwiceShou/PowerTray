@@ -70,10 +70,9 @@ public sealed class AlertManager
 
         _settings.GetDeviceSettings(device.DeviceId, device.DeviceName);
         RuntimeAlertState state = GetRuntimeState(device.DeviceId);
-        DeviceAlertSettings deviceSettings = _settings.GetDeviceSettings(device.DeviceId);
         DateTimeOffset now = DateTimeOffset.Now;
 
-        bool paused = deviceSettings.PauseUntil.HasValue && deviceSettings.PauseUntil.Value > now;
+        bool paused = _settings.IsDevicePaused(device.DeviceId, now);
         bool lowBattery = device.HasBattery &&
                           device.BatteryPercentage >= 0 &&
                           device.BatteryPercentage < _settings.GetThreshold(device.DeviceId) &&

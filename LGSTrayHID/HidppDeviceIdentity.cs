@@ -109,11 +109,15 @@ internal sealed class HidppDeviceIdentity
         string reason
     )
     {
-        string source = $"{productId:X4}|{deviceIdx:X2}|{interfaceNumber}|{endpointIdentityKey}|{deviceName}";
-        byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(source));
         return new HidppDeviceIdentity
         {
-            Identifier = $"fallback-{productId:X4}-{deviceIdx:X2}-{Convert.ToHexString(hash[..6])}",
+            Identifier = CreateStableFallbackIdentifier(
+                $"fallback-{productId:X4}-{deviceIdx:X2}",
+                productId.ToString("X4"),
+                deviceIdx.ToString("X2"),
+                interfaceNumber.ToString(),
+                deviceName
+            ),
             Source = "fallbackStableHash",
             DeviceInfoRawResponse = FormatBytes(deviceInfoRawResponse),
             SerialRawResponse = FormatBytes(serialRawResponse),
@@ -147,6 +151,13 @@ internal sealed class HidppDeviceIdentity
         return normalized.Length > 0
             && normalized.Any(x => x != '0')
             && normalized.Any(x => x != 'F' && x != 'f');
+    }
+
+    internal static string CreateStableFallbackIdentifier(string prefix, params string?[] stableParts)
+    {
+        string source = string.Join("|", stableParts.Select(x => x ?? string.Empty));
+        byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(source));
+        return $"{prefix}-{Convert.ToHexString(hash[..6])}";
     }
 
     private static bool IsMeaningfulHex(string? value)

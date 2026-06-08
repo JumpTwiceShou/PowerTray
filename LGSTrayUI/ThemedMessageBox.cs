@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -11,18 +12,20 @@ public sealed class ThemedMessageBox : Window
     private MessageBoxResult _result;
     private string _optionResult = string.Empty;
 
+    public static Func<string, string>? Translate { get; set; }
+
     private ThemedMessageBox(string message, string title, MessageBoxButton buttons, MessageBoxResult defaultResult)
         : this(message, title)
     {
         _result = defaultResult;
         if (buttons == MessageBoxButton.YesNo)
         {
-            AddButton("Yes", MessageBoxResult.Yes, true);
-            AddButton("No", MessageBoxResult.No, false);
+            AddButton(ButtonText("Yes", "Yes"), MessageBoxResult.Yes, true);
+            AddButton(ButtonText("No", "No"), MessageBoxResult.No, false);
         }
         else
         {
-            AddButton("OK", MessageBoxResult.OK, true);
+            AddButton(ButtonText("OK", "OK"), MessageBoxResult.OK, true);
         }
     }
 
@@ -90,6 +93,19 @@ public sealed class ThemedMessageBox : Window
         ThemedMessageBox dialog = new(message, title, options);
         _ = dialog.ShowDialog();
         return dialog._optionResult;
+    }
+
+    private static string ButtonText(string key, string fallback)
+    {
+        try
+        {
+            string? translated = Translate?.Invoke(key);
+            return string.IsNullOrWhiteSpace(translated) ? fallback : translated;
+        }
+        catch
+        {
+            return fallback;
+        }
     }
 
     private void AddButton(string text, MessageBoxResult result, bool isDefault)

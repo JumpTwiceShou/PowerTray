@@ -49,11 +49,11 @@ Name: "chinesesimp"; MessagesFile: "PowerTrayInstaller\ChineseSimplified.isl"
 [CustomMessages]
 english.StartWithWindows=Start with Windows
 chinesesimp.StartWithWindows=开机自启动
-english.AutoCheckUpdates=Automatically check for updates
+english.AutoCheckUpdates=Check for updates automatically
 chinesesimp.AutoCheckUpdates=自动检查更新
-english.LaunchAfterInstall=Launch PowerTray after installation
+english.LaunchAfterInstall=Launch PowerTray after setup
 chinesesimp.LaunchAfterInstall=安装完成后启动 PowerTray
-english.MissingRuntimeMessage=PowerTray requires Microsoft .NET 8 Desktop Runtime x64, including Microsoft.NETCore.App 8.x and Microsoft.WindowsDesktop.App 8.x. The download page will open now. Install the runtime, then run this setup again.
+english.MissingRuntimeMessage=PowerTray requires the Microsoft .NET 8 Desktop Runtime x64, including Microsoft.NETCore.App 8.x and Microsoft.WindowsDesktop.App 8.x. The download page will open now. Please install the runtime, then run this setup again.
 chinesesimp.MissingRuntimeMessage=PowerTray 需要 Microsoft .NET 8 Desktop Runtime x64，并且必须包含 Microsoft.NETCore.App 8.x 和 Microsoft.WindowsDesktop.App 8.x。现在会打开下载页面。请先安装运行时，然后重新运行此安装程序。
 
 [Tasks]

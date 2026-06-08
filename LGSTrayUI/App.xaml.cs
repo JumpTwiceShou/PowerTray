@@ -77,6 +77,8 @@ public partial class App : Application
         builder.Services.AddHostedService<NotifyIconViewModel>();
 
         var host = builder.Build();
+        var loc = host.Services.GetRequiredService<LocalizationService>();
+        ThemedMessageBox.Translate = key => loc[key];
         _ = host.Services.GetRequiredService<ThemeService>();
         RegisterShowSettingsSignal(host.Services.GetRequiredService<SettingsWindowFactory>());
         if (e.Args.Any(x => x.Equals("--settings", StringComparison.OrdinalIgnoreCase)))
@@ -154,8 +156,8 @@ public partial class App : Application
             if (ex is FileNotFoundException || ex is InvalidDataException)
             {
                 var msgBoxRet = ThemedMessageBox.Show(
-                    "Failed to read appsettings.toml. Reset it to default?", 
-                    "PowerTray - Settings Load Error", 
+                    "Could not read appsettings.toml. Reset it to defaults?",
+                    "PowerTray - Settings Error",
                     MessageBoxButton.YesNo, MessageBoxResult.No
                 );
 

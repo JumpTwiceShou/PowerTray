@@ -595,7 +595,7 @@
                                             </WrapPanel>
                                             <WrapPanel>
                                                 <Button Content="{Binding Loc[PauseOneHour]}" Command="{Binding PauseOneHourCommand}"/>
-                                                <Button Content="{Binding Loc[PauseToday]}" Command="{Binding PauseTodayCommand}"/>
+                                                <Button Content="{Binding Loc[PauseUntilNextLaunch]}" Command="{Binding PauseUntilNextLaunchCommand}"/>
                                                 <Button Content="{Binding Loc[ResumeAlerts]}" Command="{Binding ResumeAlertsCommand}"/>
                                                 <TextBlock Text="{Binding PauseText}" VerticalAlignment="Center" Foreground="{DynamicResource MutedTextBrush}" Margin="8,0,0,0"/>
                                             </WrapPanel>

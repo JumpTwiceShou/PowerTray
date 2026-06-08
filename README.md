@@ -11,11 +11,11 @@
 
 ---
 
-PowerTray is a vibe-driven modification and optimization based on [andyvorld/LGSTrayBattery](https://github.com/andyvorld/LGSTrayBattery). It keeps the tray battery-monitoring idea, HTTP compatibility, and HID++ direction from the original project, while changing the app into a native-only Logitech battery tray tool that does not depend on the Logitech G Hub backend.
+PowerTray is a native-only Logitech battery tray app based on [andyvorld/LGSTrayBattery](https://github.com/andyvorld/LGSTrayBattery). It keeps the original tray battery-monitoring concept, HTTP compatibility, and HID++ direction, while removing the dependency on the Logitech G Hub backend.
 
 ## 中文概要
 
-PowerTray 是基于 [andyvorld/LGSTrayBattery](https://github.com/andyvorld/LGSTrayBattery) 进行 vibe 修改和优化的 native-only 罗技设备电量托盘工具。它不依赖 Logitech G Hub 后端，直接通过 HID++ 读取设备电量，支持托盘设备图标、低电量提醒、托盘闪烁、每设备别名和阈值、双语安装器，以及兼容的本地 HTTP API。
+PowerTray 是基于 [andyvorld/LGSTrayBattery](https://github.com/andyvorld/LGSTrayBattery) 改造的罗技设备电量托盘工具。它不依赖 Logitech G Hub 后端，直接通过 HID++ 读取设备电量，支持托盘设备图标、低电量提醒、托盘闪烁、每设备自定义名称和阈值、双语安装器，以及兼容的本地 HTTP API。
 
 ## Highlights
 
@@ -23,12 +23,12 @@ PowerTray 是基于 [andyvorld/LGSTrayBattery](https://github.com/andyvorld/LGST
 - No dependency on `lghub_agent.exe` or `ws://localhost:9010`.
 - Tray icons for selected devices, including mouse/headset icons and numeric battery mode.
 - Per-device low battery alerts with independent threshold, Windows notification, tray blinking, alias, and pause controls.
-- Quiet hours and fullscreen-app notification suppression.
+- Quiet hours and notification suppression while full-screen apps are active.
 - Bilingual UI and installer: English and Simplified Chinese.
-- Single-file Windows x64 installer with optional Start with Windows.
+- Windows x64 installer with optional Start with Windows integration.
 - Compatible local HTTP API for `/devices` and `/device/{id}` XML.
 
-## Screenshots And Icon Demos
+## Screenshots and Icon Demos
 
 Some icon and API demo images are reused from the upstream `LGSTrayBattery` README with thanks.
 
@@ -36,7 +36,7 @@ Some icon and API demo images are reused from the upstream `LGSTrayBattery` READ
 
 ![Tray indicator](https://user-images.githubusercontent.com/24492062/138280300-6966b6a4-ff6d-46e6-9698-d2c8d612eb11.png)
 
-Battery percentage and voltage, when supported, are shown from tray tooltips.
+Tray tooltips show battery percentage and voltage when supported.
 
 ### Multiple Device Icons
 
@@ -54,7 +54,7 @@ Numeric mode displays the current battery percentage directly in the tray icon.
 
 ![Device type icons](https://user-images.githubusercontent.com/24492062/138284660-95949372-c59a-4569-9545-0cfe0506d1fb.png)
 
-Icons change by device type. Current UI assets support mouse, keyboard, and headset style icons.
+Icons change by device type. The current UI assets support mouse, keyboard, and headset-style icons.
 
 ![Theme reactive icons](https://user-images.githubusercontent.com/24492062/138285048-ad229703-5c4e-430e-b107-c50eb341e46b.png)
 
@@ -94,6 +94,7 @@ During installation you can choose:
 - English or Simplified Chinese initial language.
 - Install location.
 - Whether PowerTray starts with Windows.
+- Whether PowerTray checks for updates automatically.
 - Whether PowerTray launches after installation.
 
 User settings are stored at:
@@ -106,10 +107,10 @@ User settings are stored at:
 
 The settings window includes:
 
-- General: language, Start with Windows, numeric battery icon.
-- Alerts: global low battery defaults, quiet hours, fullscreen notification suppression.
-- Devices: per-device alias, low battery threshold, notification, tray blinking, alert pause, test notification, test blink.
-- Diagnostics: G Hub process status, `localhost:9010` reachability, device update time, alert settings summary, and diagnostic export.
+- General: language, Start with Windows, automatic update checks, numeric battery icon.
+- Alerts: default low-battery alert settings, quiet hours, full-screen notification suppression.
+- Devices: custom device name, low-battery threshold, notifications, tray blinking, alert pause, test notification, test tray blink.
+- Diagnostics: G Hub process status, `localhost:9010` reachability, last device update time, alert settings summary, and diagnostic export.
 
 Device aliases only affect the UI and notifications. The HTTP XML API keeps the original Logitech device name.
 
@@ -142,7 +143,7 @@ Example XML:
 </xml>
 ```
 
-Native mode does not have G Hub mileage data, so `mileage` is reported as `-1.00`.
+Native mode does not expose G Hub mileage data, so `mileage` is reported as `-1.00`.
 
 ## Build
 

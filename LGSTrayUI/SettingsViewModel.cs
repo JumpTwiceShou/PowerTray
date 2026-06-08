@@ -541,10 +541,21 @@ public sealed partial class DeviceSettingsItemViewModel : ObservableObject
     public bool ShowBatteryMetadata => _device.IsOnline && _device.BatteryPercentage >= 0;
     public string BatteryText => ShowBatteryMetadata ? $"{_device.BatteryPercentage:0}%" : "-";
     public string LastUpdateText => ShowBatteryMetadata && _device.LastUpdate != DateTimeOffset.MinValue ? _device.LastUpdate.ToString("g") : "-";
-    public bool IsPaused => _settings.GetPauseUntil(DeviceId) is { } pauseUntil && pauseUntil > DateTimeOffset.Now;
-    public string PauseText => _settings.GetPauseUntil(DeviceId) is { } pauseUntil && pauseUntil > DateTimeOffset.Now
-        ? pauseUntil.ToLocalTime().ToString("g")
-        : "-";
+    public bool IsPaused => _settings.IsDevicePaused(DeviceId, DateTimeOffset.Now);
+    public string PauseText
+    {
+        get
+        {
+            if (_settings.IsPausedUntilNextLaunch(DeviceId))
+            {
+                return Loc["PausedUntilNextLaunch"];
+            }
+
+            return _settings.GetPauseUntil(DeviceId) is { } pauseUntil && pauseUntil > DateTimeOffset.Now
+                ? string.Format(Loc["PausedUntil"], pauseUntil.ToLocalTime().ToString("g"))
+                : "-";
+        }
+    }
     public bool IsEditingThreshold => _isEditingThreshold;
     public bool FollowGlobalThreshold
     {
@@ -676,14 +687,19 @@ public sealed partial class DeviceSettingsItemViewModel : ObservableObject
     [RelayCommand]
     private void PauseOneHour()
     {
-        _settings.SetDevicePauseUntil(DeviceId, DateTimeOffset.Now.AddHours(1));
+        DateTimeOffset now = DateTimeOffset.Now;
+        DateTimeOffset baseTime = _settings.GetPauseUntil(DeviceId) is { } pauseUntil && pauseUntil > now
+            ? pauseUntil
+            : now;
+
+        _settings.SetDevicePauseUntil(DeviceId, baseTime.AddHours(1));
         Refresh();
     }
 
     [RelayCommand]
-    private void PauseToday()
+    private void PauseUntilNextLaunch()
     {
-        _settings.SetDevicePauseUntil(DeviceId, DateTimeOffset.Now.Date.AddDays(1));
+        _settings.SetDevicePauseUntilNextLaunch(DeviceId);
         Refresh();
     }
 

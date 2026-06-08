@@ -21,6 +21,7 @@ namespace LGSTrayUI
         private readonly AppSettings _appSettings;
         private readonly AlertManager _alertManager;
         private readonly Dictionary<string, int> _missedPresenceChecks = [];
+        private readonly Dictionary<string, string> _deviceIdAliases = [];
         private long _presenceEpoch;
 
         public ObservableCollection<LogiDeviceViewModel> Devices { get; } = [];
@@ -87,7 +88,7 @@ namespace LGSTrayUI
 
         public bool TryGetDevice(string deviceId, [NotNullWhen(true)] out LogiDevice? device)
         {
-            device = Devices.SingleOrDefault(x => x.IsOnline && x.DeviceId == deviceId);
+            device = Devices.FirstOrDefault(x => x.IsOnline && x.DeviceId == deviceId);
 
             return device != null;
         }
@@ -143,12 +144,43 @@ namespace LGSTrayUI
             Application.Current.Dispatcher.BeginInvoke(() =>
             {
                 long epoch = Interlocked.Read(ref _presenceEpoch);
-                LogiDeviceViewModel? dev = Devices.SingleOrDefault(x => x.DeviceId == initMessage.deviceId);
+                string resolvedDeviceId = ResolveDeviceId(initMessage.deviceId);
+                LogiDeviceViewModel? dev = Devices.FirstOrDefault(x => x.DeviceId == resolvedDeviceId);
                 if (dev != null)
                 {
                     dev.UpdateState(initMessage);
                     dev.MarkPresence(epoch);
                     _missedPresenceChecks[dev.DeviceId] = 0;
+                    _userSettings.MigrateUnstableDeviceHistory(dev.DeviceId, initMessage.deviceName);
+                    RemoveEquivalentOfflineDuplicates(dev);
+
+                    return;
+                }
+
+                LogiDeviceViewModel? equivalentDevice = FindEquivalentDevice(initMessage);
+                if (equivalentDevice != null &&
+                    (!equivalentDevice.IsOnline || ShouldMergeEquivalentOnlineDevice(equivalentDevice.DeviceId, initMessage.deviceId)))
+                {
+                    string oldDeviceId = equivalentDevice.DeviceId;
+                    string canonicalDeviceId = ChooseCanonicalDeviceId(oldDeviceId, initMessage.deviceId);
+                    if (canonicalDeviceId == initMessage.deviceId)
+                    {
+                        _userSettings.MigrateDeviceId(oldDeviceId, initMessage.deviceId, initMessage.deviceName);
+                        _deviceIdAliases[oldDeviceId] = initMessage.deviceId;
+                        equivalentDevice.DeviceId = initMessage.deviceId;
+                    }
+                    else
+                    {
+                        _deviceIdAliases[initMessage.deviceId] = canonicalDeviceId;
+                    }
+
+                    _missedPresenceChecks.Remove(oldDeviceId);
+
+                    equivalentDevice.UpdateState(initMessage);
+                    equivalentDevice.MarkPresence(epoch);
+                    _missedPresenceChecks[equivalentDevice.DeviceId] = 0;
+                    _userSettings.MigrateUnstableDeviceHistory(equivalentDevice.DeviceId, initMessage.deviceName);
+                    RemoveEquivalentOfflineDuplicates(equivalentDevice);
 
                     return;
                 }
@@ -159,16 +191,115 @@ namespace LGSTrayUI
                     x.MarkPresence(epoch);
                 });
                 _missedPresenceChecks[dev.DeviceId] = 0;
+                _userSettings.MigrateUnstableDeviceHistory(dev.DeviceId, initMessage.deviceName);
+                RemoveEquivalentOfflineDuplicates(dev);
 
                 Devices.Add(dev);
             });
+        }
+
+        private string ResolveDeviceId(string deviceId)
+        {
+            return _deviceIdAliases.TryGetValue(deviceId, out string? canonicalDeviceId)
+                ? canonicalDeviceId
+                : deviceId;
+        }
+
+        private static string ChooseCanonicalDeviceId(string existingDeviceId, string incomingDeviceId)
+        {
+            bool existingUnstable = IsUnstableDeviceId(existingDeviceId);
+            bool incomingUnstable = IsUnstableDeviceId(incomingDeviceId);
+
+            if (existingUnstable != incomingUnstable)
+            {
+                return incomingUnstable ? existingDeviceId : incomingDeviceId;
+            }
+
+            return GetDeviceIdStabilityScore(incomingDeviceId) > GetDeviceIdStabilityScore(existingDeviceId)
+                ? incomingDeviceId
+                : existingDeviceId;
+        }
+
+        private LogiDeviceViewModel? FindEquivalentDevice(InitMessage initMessage)
+        {
+            LogiDeviceViewModel[] candidates = Devices
+                .Where(device => IsEquivalentDevice(device, initMessage.deviceName, initMessage.deviceType))
+                .ToArray();
+
+            return candidates.Length == 1 ? candidates[0] : null;
+        }
+
+        private void RemoveEquivalentOfflineDuplicates(LogiDeviceViewModel activeDevice)
+        {
+            LogiDeviceViewModel[] duplicates = Devices
+                .Where(device => !device.IsOnline)
+                .Where(device => device.DeviceId != activeDevice.DeviceId)
+                .Where(device => IsEquivalentDevice(device, activeDevice.DeviceName, activeDevice.DeviceType))
+                .ToArray();
+
+            foreach (LogiDeviceViewModel duplicate in duplicates)
+            {
+                _userSettings.MigrateDeviceId(duplicate.DeviceId, activeDevice.DeviceId, activeDevice.DeviceName);
+                _missedPresenceChecks.Remove(duplicate.DeviceId);
+                Devices.Remove(duplicate);
+            }
+        }
+
+        private static bool IsEquivalentDevice(LogiDeviceViewModel device, string deviceName, DeviceType deviceType)
+        {
+            if (device.DeviceType != deviceType && device.DeviceType != default)
+            {
+                return false;
+            }
+
+            string incomingName = NormalizeDeviceName(deviceName);
+            if (string.IsNullOrEmpty(incomingName))
+            {
+                return false;
+            }
+
+            return NormalizeDeviceName(device.OriginalNameDisplay) == incomingName ||
+                   NormalizeDeviceName(device.DeviceName) == incomingName;
+        }
+
+        private static string NormalizeDeviceName(string? deviceName) =>
+            string.IsNullOrWhiteSpace(deviceName)
+                ? string.Empty
+                : deviceName.Trim().ToUpperInvariant();
+
+        private static bool IsUnstableDeviceId(string deviceId) =>
+            deviceId.StartsWith("fallback-", StringComparison.OrdinalIgnoreCase) ||
+            deviceId.StartsWith("centurion-fallback-", StringComparison.OrdinalIgnoreCase) ||
+            deviceId.StartsWith("dev", StringComparison.OrdinalIgnoreCase);
+
+        private static bool ShouldMergeEquivalentOnlineDevice(string existingDeviceId, string incomingDeviceId) =>
+            IsUnstableDeviceId(existingDeviceId) ||
+            IsUnstableDeviceId(incomingDeviceId) ||
+            GetDeviceIdStabilityScore(existingDeviceId) != GetDeviceIdStabilityScore(incomingDeviceId);
+
+        private static int GetDeviceIdStabilityScore(string deviceId)
+        {
+            if (IsUnstableDeviceId(deviceId))
+            {
+                return 0;
+            }
+
+            if (deviceId.StartsWith("centurion-", StringComparison.OrdinalIgnoreCase))
+            {
+                return 3;
+            }
+
+            return deviceId.Contains('-', StringComparison.Ordinal)
+                ? 1
+                : deviceId.Length >= 12 ? 3 : 2;
         }
 
         public void OnUpdateMessage(UpdateMessage updateMessage)
         {
             Application.Current.Dispatcher.BeginInvoke(() =>
             {
-                var device = Devices.FirstOrDefault(dev => dev.DeviceId == updateMessage.deviceId);
+                string deviceId = ResolveDeviceId(updateMessage.deviceId);
+                var device = Devices.FirstOrDefault(dev => dev.DeviceId == deviceId);
                 if (device == null) { return; }
 
                 device.UpdateState(updateMessage);
@@ -182,7 +313,8 @@ namespace LGSTrayUI
         {
             Application.Current.Dispatcher.BeginInvoke(() =>
             {
-                var device = Devices.FirstOrDefault(dev => dev.DeviceId == offlineMessage.deviceId);
+                string deviceId = ResolveDeviceId(offlineMessage.deviceId);
+                var device = Devices.FirstOrDefault(dev => dev.DeviceId == deviceId);
                 if (device == null) { return; }
 
                 device.MarkOffline();
