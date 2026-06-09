@@ -1,27 +1,27 @@
 # PowerTray 1.3.0
 
-## 更新内容
+## What's New
 
-- 修复设备重新扫描和后台服务稳定性问题。
-- 修复部分设备重连后电量轮询异常的问题。
-- 加强本地 HTTP API 的安全处理。
-- 改进设置保存逻辑，降低配置损坏或重复设备记录带来的问题。
-- 优化安装器清理逻辑，避免误删安装目录中的无关文件。
-- 优化托盘退出流程。
-- 优化设置窗口 UI。
-- 保留全局数字电量开关，并新增分设备显示设置。
-- 优化诊断页面，新增测试通知、测试闪烁和停止闪烁操作。
-- 修复离线设备类型显示错误的问题。
-- 优化中英文文案、README 和故障排查说明。
-- 新增基础自动化测试和构建流程。
+- Fixed device rediscovery and background service stability issues.
+- Fixed battery polling issues after some devices reconnect.
+- Improved local HTTP API safety.
+- Improved settings saving and recovery.
+- Improved installer cleanup behavior.
+- Improved tray exit behavior.
+- Improved settings window UI.
+- Kept the global numeric battery toggle and added per-device display settings.
+- Improved the diagnostics page with test notification, test blink, and stop blink actions.
+- Fixed incorrect device type display for offline devices.
+- Improved English and Chinese text, README, and troubleshooting notes.
+- Added basic automated tests and build workflow.
 
-## 说明
+## Notes
 
-- 本地 HTTP API 仍仅用于本机访问，默认地址为 `localhost:12321`。
-- 安装器默认仍为当前用户安装，不需要管理员权限。
-- 用户设置仍保存在 `%APPDATA%\PowerTray`。
+- The local HTTP API is still intended for local access only at `localhost:12321`.
+- The installer still installs per user by default and does not require administrator privileges.
+- User settings remain stored under `%APPDATA%\PowerTray`.
 
-## 下载
+## Downloads
 
-- `PowerTraySetup.exe`：轻量安装器，需要系统已安装 .NET 8 运行时。
-- `PowerTraySetup-full.exe`：完整安装器，已包含运行时。
+- `PowerTraySetup.exe`: lightweight installer, requires the .NET 8 runtime.
+- `PowerTraySetup-full.exe`: full installer, includes the runtime.
