@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
 
@@ -49,6 +50,10 @@ namespace LGSTrayUI
                     _device.PropertyChanged -= LogiDevicePropertyChanged;
                     _userSettings.PropertyChanged -= NotifyIconViewModelPropertyChanged;
                     CheckTheme.StaticPropertyChanged -= CheckThemePropertyChanged;
+                    taskbarIcon.TrayToolTipOpen -= OnTrayToolTipOpen;
+                    taskbarIcon.TrayToolTipClose -= OnTrayToolTipClose;
+                    _tooltipCloseTimer.Stop();
+                    CloseTrayToolTip();
                 }
 
                 // TODO: free unmanaged resources (unmanaged objects) and override finalizer
@@ -97,13 +102,12 @@ namespace LGSTrayUI
         private readonly LogiDevice _device;
         private readonly UserSettingsWrapper _userSettings;
         private readonly DispatcherTimer _blinkTimer;
+        private readonly DispatcherTimer _tooltipCloseTimer;
         private bool _blinkVisible = true;
 
         public LogiDeviceIcon(LogiDevice device, AppSettings appSettings, UserSettingsWrapper userSettings, AlertStateService alertState)
         {
             InitializeComponent();
-
-            taskbarIcon.TrayToolTip = null;
 
             _device = device;
             _userSettings = userSettings;
@@ -122,6 +126,13 @@ namespace LGSTrayUI
             {
                 Interval = TimeSpan.FromMilliseconds(500),
             };
+            _tooltipCloseTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromSeconds(4),
+            };
+            _tooltipCloseTimer.Tick += (_, _) => CloseTrayToolTip();
+            taskbarIcon.TrayToolTipOpen += OnTrayToolTipOpen;
+            taskbarIcon.TrayToolTipClose += OnTrayToolTipClose;
             _blinkTimer.Tick += (_, _) =>
             {
                 _blinkVisible = !_blinkVisible;
@@ -129,6 +140,46 @@ namespace LGSTrayUI
             };
             OnAlertStateChanged();
             DrawBatteryIcon();
+        }
+
+        private void OnTrayToolTipOpen(object sender, RoutedEventArgs e)
+        {
+            ConfigureTrayToolTip();
+            _tooltipCloseTimer.Stop();
+            _tooltipCloseTimer.Start();
+        }
+
+        private void OnTrayToolTipClose(object sender, RoutedEventArgs e)
+        {
+            _tooltipCloseTimer.Stop();
+        }
+
+        private void ConfigureTrayToolTip()
+        {
+            ToolTip? toolTip = taskbarIcon.TrayToolTipResolved;
+            if (toolTip == null)
+            {
+                return;
+            }
+
+            toolTip.StaysOpen = false;
+            ToolTipService.SetShowDuration(toolTip, 4000);
+        }
+
+        private void CloseTrayToolTip()
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                _ = Dispatcher.BeginInvoke(CloseTrayToolTip);
+                return;
+            }
+
+            _tooltipCloseTimer.Stop();
+            ToolTip? toolTip = taskbarIcon.TrayToolTipResolved;
+            if (toolTip != null)
+            {
+                toolTip.IsOpen = false;
+            }
         }
 
         public static bool ShowBalloonOnFirstIcon(string title, string body)
@@ -223,12 +274,23 @@ namespace LGSTrayUI
             {
                 DrawBatteryIcon();
             }
+            else if (e.PropertyName == nameof(LogiDeviceViewModel.DisplayToolTipString))
+            {
+                CloseTrayToolTip();
+            }
         }
 
         private void DrawBatteryIcon()
         {
             _ = Dispatcher.BeginInvoke(() =>
             {
+                if (disposedValue)
+                {
+                    return;
+                }
+
+                CloseTrayToolTip();
+
                 if (_alertState.IsBlinking(_device.DeviceId) && !_blinkVisible)
                 {
                     BatteryIconDrawing.DrawAlert(taskbarIcon, _device);
