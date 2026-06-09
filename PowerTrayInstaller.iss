@@ -11,7 +11,7 @@
 #endif
 
 #ifndef AppVersion
-  #define AppVersion "1.2.3"
+  #define AppVersion "1.3.0"
 #endif
 
 #ifndef IncludeRuntime
@@ -64,7 +64,9 @@ Name: "checkupdates"; Description: "{cm:AutoCheckUpdates}"
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [InstallDelete]
-Type: filesandordirs; Name: "{app}\*"
+Type: files; Name: "{app}\LGSTray.exe"
+Type: files; Name: "{app}\LGSTrayHID.exe"
+Type: files; Name: "{app}\LGSTray.dll.config"
 Type: files; Name: "{autoprograms}\{#AppName}\{#AppName}.lnk"
 Type: dirifempty; Name: "{autoprograms}\{#AppName}"
 Type: files; Name: "{autoprograms}\LGSTray\LGSTray.lnk"

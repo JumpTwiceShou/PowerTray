@@ -16,7 +16,7 @@ enabled = true
 # Time in seconds to retry a device poll on failure
 retryTime = 10
 
-# Time in seconds to next device poll on sucess
+# Time in seconds until the next device poll on success
 pollPeriod = 600
 
 # List of disabled devices

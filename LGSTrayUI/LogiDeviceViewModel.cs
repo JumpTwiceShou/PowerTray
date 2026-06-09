@@ -51,12 +51,14 @@ namespace LGSTrayUI
         public bool HasAlias => !string.IsNullOrWhiteSpace(_userSettings.GetAlias(DeviceId, DeviceName));
         public bool ShowOriginalName => HasAlias && !string.Equals(BaseDisplayName, OriginalNameDisplay, StringComparison.Ordinal);
 
-        public string DisplayToolTipString =>
+        public string DisplayToolTipString => BatteryPercentage >= 0
+            ?
 #if DEBUG
-            $"{DisplayName}, {BatteryPercentage:f2}% - {LastUpdate}";
+            $"{DisplayName}, {BatteryPercentage:f2}% - {LastUpdate}"
 #else
-            $"{DisplayName}, {BatteryPercentage:f2}%";
+            $"{DisplayName}, {BatteryPercentage:f2}%"
 #endif
+            : $"{DisplayName}, {_loc["BatteryUnknown"]}";
 
         public LogiDeviceViewModel(LogiDeviceIconFactory logiDeviceIconFactory, UserSettingsWrapper userSettings, LocalizationService loc)
         {
@@ -134,7 +136,7 @@ namespace LGSTrayUI
             DeviceName = initMessage.deviceName;
             HasBattery = initMessage.hasBattery;
             DeviceType = initMessage.deviceType;
-            _userSettings.GetDeviceSettings(DeviceId, DeviceName);
+            _userSettings.GetDeviceSettings(DeviceId, DeviceName, DeviceType);
             RefreshDisplayProperties();
         }
 

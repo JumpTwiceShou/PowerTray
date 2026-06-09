@@ -14,6 +14,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading.Tasks;
+using System.Windows;
 using Microsoft.Win32;
 using Microsoft.Extensions.Options;
 using LGSTrayPrimitives;
@@ -219,7 +220,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         await RefreshDiagnosticsAsync();
         NativeDiagnosticsResponseMessage? nativeResponse = await _nativeDiagnosticsClient.RequestAsync(TimeSpan.FromSeconds(2));
-        string? nativeError = nativeResponse == null ? "PowerTrayHID did not respond before the diagnostics timeout." : nativeResponse.error;
+        string? nativeError = nativeResponse == null ? Loc["HidNoResponse"] : nativeResponse.error;
         JsonObject diagnosticsJson = BuildDiagnosticsJson(nativeResponse, nativeError);
         string summary = BuildDiagnosticsSummary(nativeResponse, nativeError);
         string readme = BuildDiagnosticsReadme();
@@ -255,6 +256,24 @@ public sealed partial class SettingsViewModel : ObservableObject
     private async Task CheckForUpdatesAsync()
     {
         await _updateService.CheckForUpdatesAsync();
+    }
+
+    [RelayCommand]
+    private void TestNotification()
+    {
+        _notifications.ShowTest();
+    }
+
+    [RelayCommand]
+    private void TestBlinkAll()
+    {
+        _alertManager.TestBlinkAll(_deviceCollection.Devices.Where(device => device.IsChecked && device.IsOnline));
+    }
+
+    [RelayCommand]
+    private void StopBlink()
+    {
+        _alertManager.StopBlinking();
     }
 
     private void OnDevicesChanged(object? sender, NotifyCollectionChangedEventArgs e)
@@ -333,9 +352,9 @@ public sealed partial class SettingsViewModel : ObservableObject
     private string BuildDiagnostics()
     {
         StringBuilder sb = new();
-        sb.AppendLine("PowerTray Diagnostics");
+        sb.AppendLine(Loc["DiagnosticsTitle"]);
         sb.AppendLine($"{Loc["ReleaseVersion"]}: {CurrentVersion}");
-        sb.AppendLine($"Generated: {DateTimeOffset.Now:o}");
+        sb.AppendLine($"{Loc["DiagnosticsGenerated"]}: {DateTimeOffset.Now:o}");
         sb.AppendLine($"{Loc["CurrentLanguage"]}: {Language}");
         sb.AppendLine($"{Loc["Theme"]}: {ThemeMode}");
         sb.AppendLine($"{Loc["GHubStatus"]}: {GHubStatus}");
@@ -344,7 +363,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         sb.AppendLine(Loc["AlertSummary"]);
         sb.AppendLine(_settings.ExportSettingsSummary());
         sb.AppendLine();
-        sb.AppendLine("Devices:");
+        sb.AppendLine($"{Loc["DiagnosticsDevices"]}:");
         foreach (LogiDeviceViewModel device in _deviceCollection.Devices)
         {
             sb.AppendLine($"{device.DeviceId} | {device.DeviceName} | {device.DeviceType} | {device.BatteryPercentage:0.00}% | {device.PowerSupplyStatus} | {device.LastUpdate:o}");
@@ -363,7 +382,7 @@ public sealed partial class SettingsViewModel : ObservableObject
             }
             catch
             {
-                nativeError = "PowerTrayHID returned diagnostics JSON that could not be parsed.";
+                nativeError = Loc["HidJsonParseFailed"];
             }
         }
 
@@ -449,23 +468,23 @@ public sealed partial class SettingsViewModel : ObservableObject
     private string BuildDiagnosticsSummary(NativeDiagnosticsResponseMessage? nativeResponse, string? nativeError)
     {
         StringBuilder sb = new();
-        sb.AppendLine("PowerTray Diagnostics");
+        sb.AppendLine(Loc["DiagnosticsTitle"]);
         sb.AppendLine($"{Loc["ReleaseVersion"]}: {CurrentVersion}");
-        sb.AppendLine($"Generated: {DateTimeOffset.Now:o}");
+        sb.AppendLine($"{Loc["DiagnosticsGenerated"]}: {DateTimeOffset.Now:o}");
         sb.AppendLine($"{Loc["CurrentLanguage"]}: {Language}");
         sb.AppendLine($"{Loc["GHubStatus"]}: {GHubStatus}");
         sb.AppendLine($"{Loc["Port9010Status"]}: {Port9010Status}");
-        sb.AppendLine($"Native diagnostics: {(nativeResponse == null ? "unavailable" : "available")}");
+        sb.AppendLine(string.Format(Loc["NativeDiagnostics"], nativeResponse == null ? Loc["Unavailable"] : Loc["Available"]));
         if (!string.IsNullOrWhiteSpace(nativeError))
         {
-            sb.AppendLine($"Native diagnostics error: {nativeError}");
+            sb.AppendLine(string.Format(Loc["NativeDiagnosticsError"], nativeError));
         }
         if (!string.IsNullOrWhiteSpace(nativeResponse?.summaryText))
         {
             sb.AppendLine(nativeResponse.summaryText);
         }
         sb.AppendLine();
-        sb.AppendLine("Recognized devices:");
+        sb.AppendLine($"{Loc["RecognizedDevices"]}:");
         foreach (LogiDeviceViewModel device in _deviceCollection.Devices)
         {
             sb.AppendLine($"- {device.DeviceId} | {device.DeviceName} | {device.DeviceType} | {device.BatteryPercentage:0.00}% | {device.PowerSupplyStatus}");
@@ -474,8 +493,31 @@ public sealed partial class SettingsViewModel : ObservableObject
         return sb.ToString();
     }
 
-    private static string BuildDiagnosticsReadme()
+    private string BuildDiagnosticsReadme()
     {
+        if (Loc.CurrentLanguage.Equals("zh-CN", StringComparison.OrdinalIgnoreCase))
+        {
+            return """
+PowerTray 诊断包
+
+报告不支持的 Logitech 设备时，请附上 diagnostics.json。
+此诊断包会对 HID 路径和序列号做哈希处理。产品名称、产品 ID、
+usage page、接口编号、HID++ feature map 和电量探测结果会被保留，
+因为这些信息用于判断和新增设备支持。
+
+重要字段：
+- hidEnumeration：Windows 当前可见的所有 Logitech HID 端点。
+- unsupportedHidDevices：未探测、无法打开或非 Logitech 的 HID 背景端点。
+- nativeDiscovery：PowerTrayHID 在发现设备时尝试过的路径。
+- nativeDiscovery[].failureReasons：设备或 session 被跳过的原因。
+- nativeDiscovery[].devices[].identity：0x0003 identity 原始响应、unit id、
+  model id、serial response 和最终 identifier 来源。
+- nativeDiscovery[].devices[].featureMap：已识别设备暴露的 HID++ features。
+- nativeDiscovery[].centurion：Centurion report id、device address、bridge 和电量数据。
+- recognizedDevices：当前 UI 中显示的设备。
+""";
+        }
+
         return """
 PowerTray diagnostics package
 
@@ -582,6 +624,33 @@ public sealed partial class DeviceSettingsItemViewModel : ObservableObject
 
     public bool IsCustomThreshold => !FollowGlobalThreshold;
 
+    public bool FollowGlobalNumericDisplay
+    {
+        get => !_settings.HasDeviceNumericDisplayOverride(DeviceId);
+        set
+        {
+            if (FollowGlobalNumericDisplay == value)
+            {
+                return;
+            }
+
+            _settings.SetDeviceNumericDisplayOverride(DeviceId, value ? null : _settings.NumericDisplay);
+            Refresh();
+        }
+    }
+
+    public bool IsCustomNumericDisplay => !FollowGlobalNumericDisplay;
+
+    public bool NumericDisplay
+    {
+        get => _settings.GetDeviceNumericDisplay(DeviceId);
+        set
+        {
+            _settings.SetDeviceNumericDisplayOverride(DeviceId, value);
+            Refresh();
+        }
+    }
+
     public DeviceSettingsItemViewModel(
         LogiDeviceViewModel device,
         UserSettingsWrapper settings,
@@ -681,6 +750,18 @@ public sealed partial class DeviceSettingsItemViewModel : ObservableObject
     [RelayCommand]
     private void RemoveHistory()
     {
+        MessageBoxResult result = ThemedMessageBox.Show(
+            string.Format(Loc["ConfirmForgetDeviceBody"], DisplayName),
+            Loc["ConfirmForgetDeviceTitle"],
+            MessageBoxButton.YesNo,
+            MessageBoxResult.No
+        );
+
+        if (result != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
         _removeHistory(this);
     }
 

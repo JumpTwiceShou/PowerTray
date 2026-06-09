@@ -222,11 +222,23 @@ namespace LGSTrayCore.Managers
             catch { }
         }
 
-        public async void RediscoverDevices()
+        public void RediscoverDevices()
         {
-            using var cts = new CancellationTokenSource();
-            await StopAsync(cts.Token);
-            await StartAsync(cts.Token);
+            _ = RediscoverDevicesAsync();
+        }
+
+        private async Task RediscoverDevicesAsync()
+        {
+            try
+            {
+                using var cts = new CancellationTokenSource();
+                await StopAsync(cts.Token);
+                await StartAsync(cts.Token);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Failed to rediscover G Hub devices: {ex}");
+            }
         }
     }
 }

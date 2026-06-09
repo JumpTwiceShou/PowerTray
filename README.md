@@ -76,14 +76,28 @@ The local HTTP server exposes a simple device list and XML battery endpoint.
 
 The native backend has been validated on:
 
-- `PRO X2 SUPERSTRIKE Wireless Mouse`
-- `PRO X 2 Lightspeed Gaming Headset`
+| Device | Status | Notes |
+| --- | --- | --- |
+| `PRO X2 SUPERSTRIKE Wireless Mouse` | Validated | Native HID++ battery reads through a LIGHTSPEED receiver. |
+| `PRO X 2 Lightspeed Gaming Headset` | Validated | Native headset battery reads. |
+| G533 / G535 / G733 / G935 / PRO X Wireless headsets | Recognized by product id | Expected to work only when a compatible HID++ battery feature is exposed. |
+| G522 LIGHTSPEED | Implemented, not physically validated | Centurion `0x50` transport and `0x0104` battery reads are implemented. |
 
 The native backend includes explicit headset recognition for G533, G535, G733, G935, and PRO X Wireless headset product ids. G733-style headsets use `0x1F20 ADC MEASUREMENT` battery data when available.
 
 G522 LIGHTSPEED support is implemented for Centurion `0x50` transport and `0x0104` battery reads, but has not been validated with physical G522 hardware in this release.
 
 Other Logitech HID++ devices may work if they expose supported battery features (`0x1000`, `0x1001`, `0x1004`, `0x1F20`) through compatible HID++ endpoints.
+
+## Scope and Limitations
+
+PowerTray is a lightweight battery/status tray utility. It does not replace Logitech G Hub for button mapping, profiles, macros, lighting, firmware updates, Dolby/Atmos settings, or other device configuration features.
+
+PowerTray does not require the Logitech G Hub backend and does not modify Logitech drivers or device configuration. Device support depends on whether Windows exposes a compatible Logitech HID++ endpoint and whether the device reports one of the supported battery features.
+
+## Privacy and Local-Only Behavior
+
+PowerTray reads local HID++ battery data and stores user settings under `%APPDATA%\PowerTray`. The HTTP API is intended for local use and defaults to `localhost`. PowerTray does not collect telemetry; if automatic update checks are enabled, it contacts the GitHub Releases API for this repository.
 
 ## Install
 
@@ -113,6 +127,14 @@ The settings window includes:
 - Diagnostics: G Hub process status, `localhost:9010` reachability, last device update time, alert settings summary, and diagnostic export.
 
 Device aliases only affect the UI and notifications. The HTTP XML API keeps the original Logitech device name.
+
+## Troubleshooting
+
+- If no supported devices appear, reconnect the receiver or device, then choose **Rescan devices** from the tray menu.
+- If a headset such as G733 does not show battery data, the device may not expose a compatible HID++ battery feature on this Windows HID endpoint.
+- If the lightweight installer reports that .NET 8 Desktop Runtime is missing, install the runtime first or use `PowerTraySetup-full.exe`.
+- If the HTTP API is not reachable, check whether another local process is already using port `12321`.
+- G Hub is not required. If G Hub is installed, PowerTray still reads battery data through its native backend by default and does not change Logitech driver or profile settings.
 
 ## HTTP API
 

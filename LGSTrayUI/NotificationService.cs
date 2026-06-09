@@ -29,6 +29,13 @@ public sealed class NotificationService
         Show(title, body);
     }
 
+    public void ShowTest()
+    {
+        string title = _loc["TestNotificationTitle"];
+        string body = _loc["TestNotificationGenericBody"];
+        Show(title, body);
+    }
+
     public void Show(string title, string body)
     {
         NotificationRequested?.Invoke(title, body);

@@ -6,6 +6,7 @@ using System.Collections.Specialized;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using LGSTrayPrimitives;
 
 namespace LGSTrayUI
 {
@@ -77,6 +78,7 @@ namespace LGSTrayUI
                 _settings.NumericDisplay = value;
                 Save();
                 OnPropertyChanged();
+                OnDeviceSettingsChanged();
             }
         }
 
@@ -223,7 +225,7 @@ namespace LGSTrayUI
             OnDeviceSettingsChanged(deviceId);
         }
 
-        public DeviceAlertSettings GetDeviceSettings(string deviceId, string deviceName = "")
+        public DeviceAlertSettings GetDeviceSettings(string deviceId, string deviceName = "", DeviceType? deviceType = null)
         {
             if (!_settings.Devices.TryGetValue(deviceId, out DeviceAlertSettings? deviceSettings))
             {
@@ -231,13 +233,44 @@ namespace LGSTrayUI
                 _settings.Devices[deviceId] = deviceSettings;
             }
 
+            bool changed = false;
             if (IsPersistableDeviceName(deviceName) && deviceSettings.LastDeviceName != deviceName)
             {
                 deviceSettings.LastDeviceName = deviceName;
+                changed = true;
+            }
+
+            if (deviceType.HasValue && deviceSettings.LastDeviceType != deviceType.Value)
+            {
+                deviceSettings.LastDeviceType = deviceType.Value;
+                changed = true;
+            }
+
+            if (changed)
+            {
                 Save();
             }
 
             return deviceSettings;
+        }
+
+        public DeviceType GetDeviceType(string deviceId, string deviceName = "")
+        {
+            DeviceAlertSettings deviceSettings = GetDeviceSettings(deviceId, deviceName);
+            if (deviceSettings.LastDeviceType.HasValue)
+            {
+                return deviceSettings.LastDeviceType.Value;
+            }
+
+            DeviceType? inferredType = InferDeviceType(deviceSettings.LastDeviceName) ?? InferDeviceType(deviceName);
+            if (inferredType.HasValue)
+            {
+                deviceSettings.LastDeviceType = inferredType.Value;
+                SaveDevice(deviceId);
+                return inferredType.Value;
+            }
+
+            return default;
         }
 
         public string GetDisplayName(string deviceId, string deviceName)
@@ -277,6 +310,15 @@ namespace LGSTrayUI
         public bool GetTrayBlinkEnabled(string deviceId) =>
             GetDeviceSettings(deviceId).TrayBlink ?? _settings.GlobalAlerts.TrayBlink;
 
+        public bool GetDeviceNumericDisplay(string deviceId) =>
+            IsPersistableDeviceId(deviceId)
+                ? GetDeviceSettings(deviceId).NumericDisplay ?? _settings.NumericDisplay
+                : _settings.NumericDisplay;
+
+        public bool HasDeviceNumericDisplayOverride(string deviceId) =>
+            IsPersistableDeviceId(deviceId) &&
+            GetDeviceSettings(deviceId).NumericDisplay.HasValue;
+
         public DateTimeOffset? GetPauseUntil(string deviceId) =>
             GetDeviceSettings(deviceId).PauseUntil;
 
@@ -311,6 +353,17 @@ namespace LGSTrayUI
             SaveDevice(deviceId);
         }
 
+        public void SetDeviceNumericDisplayOverride(string deviceId, bool? enabled)
+        {
+            if (!IsPersistableDeviceId(deviceId))
+            {
+                return;
+            }
+
+            GetDeviceSettings(deviceId).NumericDisplay = enabled;
+            SaveDevice(deviceId);
+        }
+
         public void SetDevicePauseUntil(string deviceId, DateTimeOffset? pauseUntil)
         {
             _pausedUntilNextLaunch.Remove(deviceId);
@@ -325,7 +378,7 @@ namespace LGSTrayUI
             SaveDevice(deviceId);
         }
 
-        public bool MigrateDeviceId(string oldDeviceId, string newDeviceId, string deviceName)
+        public bool MigrateDeviceId(string oldDeviceId, string newDeviceId, string deviceName, DeviceType? deviceType = null)
         {
             if (string.IsNullOrWhiteSpace(oldDeviceId) ||
                 string.IsNullOrWhiteSpace(newDeviceId) ||
@@ -367,6 +420,16 @@ namespace LGSTrayUI
                 if (newDeviceSettings.LastDeviceName != deviceName)
                 {
                     newDeviceSettings.LastDeviceName = deviceName;
+                    changed = true;
+                }
+            }
+
+            if (deviceType.HasValue)
+            {
+                DeviceAlertSettings newDeviceSettings = GetDeviceSettings(newDeviceId);
+                if (newDeviceSettings.LastDeviceType != deviceType.Value)
+                {
+                    newDeviceSettings.LastDeviceType = deviceType.Value;
                     changed = true;
                 }
             }
@@ -420,10 +483,12 @@ namespace LGSTrayUI
             {
                 string alias = deviceSettings.Alias;
                 string lastName = deviceSettings.LastDeviceName;
+                DeviceType? lastType = deviceSettings.LastDeviceType;
                 _settings.Devices[deviceId] = new DeviceAlertSettings
                 {
                     Alias = alias,
                     LastDeviceName = lastName,
+                    LastDeviceType = lastType,
                 };
                 SaveDevice(deviceId);
             }
@@ -452,9 +517,11 @@ namespace LGSTrayUI
                 target.LastDeviceName = source.LastDeviceName;
             }
 
+            target.LastDeviceType ??= source.LastDeviceType;
             target.ThresholdPercent ??= source.ThresholdPercent;
             target.WindowsNotification ??= source.WindowsNotification;
             target.TrayBlink ??= source.TrayBlink;
+            target.NumericDisplay ??= source.NumericDisplay;
             target.PauseUntil ??= source.PauseUntil;
         }
 
@@ -519,10 +586,7 @@ namespace LGSTrayUI
 
                     if (settings != null)
                     {
-                        settings.Language = NormalizeLanguage(settings.Language);
-                        settings.ThemeMode = NormalizeThemeMode(settings.ThemeMode);
-                        settings.GlobalAlerts.ThresholdPercent = ClampPercent(settings.GlobalAlerts.ThresholdPercent);
-                        return settings;
+                        return NormalizeSettings(settings);
                     }
                 }
             }
@@ -533,6 +597,43 @@ namespace LGSTrayUI
             }
 
             return MigrateLegacySettings();
+        }
+
+        private static PowerTrayUserSettings NormalizeSettings(PowerTrayUserSettings settings)
+        {
+            settings.Language = NormalizeLanguage(settings.Language);
+            settings.ThemeMode = NormalizeThemeMode(settings.ThemeMode);
+            settings.SelectedDevices ??= [];
+            settings.SelectedDevices = settings.SelectedDevices
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            settings.GlobalAlerts ??= new();
+            settings.GlobalAlerts.ThresholdPercent = ClampPercent(settings.GlobalAlerts.ThresholdPercent);
+            settings.GlobalAlerts.QuietHoursStart = NormalizeTime(settings.GlobalAlerts.QuietHoursStart, "23:00");
+            settings.GlobalAlerts.QuietHoursEnd = NormalizeTime(settings.GlobalAlerts.QuietHoursEnd, "08:00");
+            settings.Devices ??= [];
+
+            foreach (string deviceId in settings.Devices
+                .Where(x => x.Value == null)
+                .Select(x => x.Key)
+                .ToArray())
+            {
+                settings.Devices[deviceId] = new();
+            }
+
+            foreach (DeviceAlertSettings deviceSettings in settings.Devices.Values)
+            {
+                deviceSettings.Alias ??= string.Empty;
+                deviceSettings.LastDeviceName ??= string.Empty;
+                deviceSettings.LastDeviceType ??= InferDeviceType(deviceSettings.LastDeviceName);
+                if (deviceSettings.ThresholdPercent.HasValue)
+                {
+                    deviceSettings.ThresholdPercent = ClampPercent(deviceSettings.ThresholdPercent.Value);
+                }
+            }
+
+            return settings;
         }
 
         private static PowerTrayUserSettings MigrateLegacySettings()
@@ -565,7 +666,17 @@ namespace LGSTrayUI
         private void Save()
         {
             Directory.CreateDirectory(PowerTrayConstants.UserDataDirectory);
-            File.WriteAllText(PowerTrayConstants.SettingsPath, JsonSerializer.Serialize(_settings, JsonOptions));
+            string tempPath = PowerTrayConstants.SettingsPath + ".tmp";
+            string backupPath = PowerTrayConstants.SettingsPath + ".bak";
+            File.WriteAllText(tempPath, JsonSerializer.Serialize(_settings, JsonOptions));
+
+            if (File.Exists(PowerTrayConstants.SettingsPath))
+            {
+                File.Replace(tempPath, PowerTrayConstants.SettingsPath, backupPath, true);
+                return;
+            }
+
+            File.Move(tempPath, PowerTrayConstants.SettingsPath, true);
         }
 
         private static string NormalizeLanguage(string? language)
@@ -589,6 +700,40 @@ namespace LGSTrayUI
                    !deviceName.Equals("NOT FOUND", StringComparison.OrdinalIgnoreCase) &&
                    !deviceName.Equals("Not Initialised", StringComparison.OrdinalIgnoreCase) &&
                    !deviceName.Equals("Not Initialized", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static DeviceType? InferDeviceType(string? deviceName)
+        {
+            if (string.IsNullOrWhiteSpace(deviceName))
+            {
+                return null;
+            }
+
+            string normalized = deviceName.ToUpperInvariant();
+            if (normalized.Contains("HEADSET", StringComparison.Ordinal) ||
+                normalized.Contains("LIGHTSPEED GAMING HEADSET", StringComparison.Ordinal))
+            {
+                return DeviceType.Headset;
+            }
+
+            if (normalized.Contains("MOUSE", StringComparison.Ordinal) ||
+                normalized.Contains("SUPERSTRIKE", StringComparison.Ordinal))
+            {
+                return DeviceType.Mouse;
+            }
+
+            if (normalized.Contains("KEYBOARD", StringComparison.Ordinal))
+            {
+                return DeviceType.Keyboard;
+            }
+
+            return null;
+        }
+
+        private static bool IsPersistableDeviceId(string? deviceId)
+        {
+            return !string.IsNullOrWhiteSpace(deviceId) &&
+                   !deviceId.Equals("NOT FOUND", StringComparison.OrdinalIgnoreCase);
         }
 
         private static int ClampPercent(int value) => Math.Clamp(value, 1, 100);

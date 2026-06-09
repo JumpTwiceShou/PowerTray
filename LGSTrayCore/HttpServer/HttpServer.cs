@@ -4,6 +4,7 @@ using EmbedIO.WebApi;
 using LGSTrayPrimitives;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
+using System.Diagnostics;
 
 namespace LGSTrayCore.HttpServer
 {
@@ -47,6 +48,7 @@ namespace LGSTrayCore.HttpServer
 
         private CancellationTokenSource _serverCts = null!;
         private WebServer _server = null!;
+        private Task? _serverTask;
 
         public HttpServer(IOptions<AppSettings> appSettings, HttpControllerFactory httpControllerFactory)
         {
@@ -58,16 +60,33 @@ namespace LGSTrayCore.HttpServer
         {
             _serverCts = new();
             _server = CreateServer(_appSettings, _httpControllerFactory);
-            _server.RunAsync(_serverCts.Token);
+            _serverTask = _server.RunAsync(_serverCts.Token);
+            _ = _serverTask.ContinueWith(
+                task => Debug.WriteLine($"PowerTray HTTP server stopped unexpectedly: {task.Exception}"),
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted,
+                TaskScheduler.Default
+            );
 
             return Task.CompletedTask;
         }
 
-        public Task StopAsync(CancellationToken cancellationToken)
+        public async Task StopAsync(CancellationToken cancellationToken)
         {
             _serverCts.Cancel();
 
-            return Task.CompletedTask;
+            if (_serverTask == null)
+            {
+                return;
+            }
+
+            try
+            {
+                await _serverTask.WaitAsync(cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+            }
         }
 
         private static WebServer CreateServer(AppSettings appSettings, HttpControllerFactory httpControllerFactory)

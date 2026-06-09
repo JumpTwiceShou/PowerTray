@@ -284,30 +284,37 @@ namespace LGSTrayHID
 
             _ = Task.Run(async () =>
             {
-                if (_getBatteryAsync == null) { return; }
-
-                if (delayFirstBatteryRetry)
+                CancellationToken cancellationToken = Parent.LifetimeToken;
+                try
                 {
-                    await Task.Delay(1000);
-                }
+                    if (_getBatteryAsync == null) { return; }
 
-                while (true)
-                {
-                    var now = DateTimeOffset.Now;
-#if DEBUG
-                    var expectedUpdateTime = lastUpdate.AddSeconds(1);
-#else
-                    var expectedUpdateTime = lastUpdate.AddSeconds(GlobalSettings.settings.PollPeriod);
-#endif
-                    if (now < expectedUpdateTime)
+                    if (delayFirstBatteryRetry)
                     {
-                        await Task.Delay((int)(expectedUpdateTime - now).TotalMilliseconds);
+                        await Task.Delay(1000, cancellationToken);
                     }
 
-                    await UpdateBattery();
-                    await Task.Delay(GlobalSettings.settings.RetryTime * 1000);
+                    while (!cancellationToken.IsCancellationRequested)
+                    {
+                        var now = DateTimeOffset.Now;
+#if DEBUG
+                        var expectedUpdateTime = lastUpdate.AddSeconds(1);
+#else
+                        var expectedUpdateTime = lastUpdate.AddSeconds(GlobalSettings.settings.PollPeriod);
+#endif
+                        if (now < expectedUpdateTime)
+                        {
+                            await Task.Delay((int)(expectedUpdateTime - now).TotalMilliseconds, cancellationToken);
+                        }
+
+                        await UpdateBattery();
+                        await Task.Delay(GlobalSettings.settings.RetryTime * 1000, cancellationToken);
+                    }
                 }
-            });
+                catch (OperationCanceledException)
+                {
+                }
+            }, Parent.LifetimeToken);
         }
 
         public async Task UpdateBattery(bool forceIpcUpdate = false)

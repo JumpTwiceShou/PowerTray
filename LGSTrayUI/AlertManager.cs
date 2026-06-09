@@ -122,6 +122,43 @@ public sealed class AlertManager
         timer.Start();
     }
 
+    public void TestBlinkAll(IEnumerable<LogiDeviceViewModel> devices)
+    {
+        LogiDeviceViewModel[] targets = devices
+            .Where(device => !string.IsNullOrWhiteSpace(device.DeviceId) &&
+                             device.DeviceId != LGSTrayCore.LogiDevice.NOT_FOUND)
+            .ToArray();
+
+        if (targets.Length == 0)
+        {
+            return;
+        }
+
+        foreach (LogiDeviceViewModel device in targets)
+        {
+            _alertState.SetBlinking(device.DeviceId, true);
+        }
+
+        DispatcherTimer timer = new()
+        {
+            Interval = TimeSpan.FromSeconds(5),
+        };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            foreach (LogiDeviceViewModel device in targets)
+            {
+                Evaluate(device);
+            }
+        };
+        timer.Start();
+    }
+
+    public void StopBlinking()
+    {
+        _alertState.ClearAll();
+    }
+
     private RuntimeAlertState GetRuntimeState(string deviceId)
     {
         if (!_runtime.TryGetValue(deviceId, out RuntimeAlertState? state))

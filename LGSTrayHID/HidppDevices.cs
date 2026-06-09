@@ -47,6 +47,7 @@ namespace LGSTrayHID
         private HidDevicePtr _devShort = IntPtr.Zero;
         private HidDevicePtr _devLong = IntPtr.Zero;
         private CancellationTokenSource? _readCts;
+        private readonly CancellationTokenSource _lifetimeCts = new();
         private byte _pingPayload = 0x55;
         private byte _centurionSwId = 0x01;
         private byte _centurionReportId = CENTURION_REPORT_ID;
@@ -69,6 +70,7 @@ namespace LGSTrayHID
             _shortEndpoint.PathHash.Equals(pathHash, StringComparison.OrdinalIgnoreCase)
             || (_longEndpoint?.PathHash.Equals(pathHash, StringComparison.OrdinalIgnoreCase) ?? false);
         public bool Disposed => _disposeCount > 0;
+        internal CancellationToken LifetimeToken => _lifetimeCts.Token;
 
         internal HidppDevices(HidEndpointInfo shortEndpoint, HidEndpointInfo? longEndpoint)
         {
@@ -125,6 +127,7 @@ namespace LGSTrayHID
             }
 
             _readCts?.Cancel();
+            _lifetimeCts.Cancel();
             _readCts?.Dispose();
             _readCts = null;
             _channel.Writer.TryComplete();
@@ -483,10 +486,18 @@ namespace LGSTrayHID
 
             _ = Task.Run(async () =>
             {
-                while (!Disposed)
+                CancellationToken cancellationToken = _lifetimeCts.Token;
+                while (!cancellationToken.IsCancellationRequested)
                 {
-                    await Task.Delay(GlobalSettings.settings.PollPeriod * 1000);
-                    await UpdateCenturionBatteryAsync(deviceId, features, request);
+                    try
+                    {
+                        await Task.Delay(GlobalSettings.settings.PollPeriod * 1000, cancellationToken);
+                        await UpdateCenturionBatteryAsync(deviceId, features, request);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
                 }
             });
 

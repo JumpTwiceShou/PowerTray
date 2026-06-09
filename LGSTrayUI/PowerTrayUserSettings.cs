@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using LGSTrayPrimitives;
 
 namespace LGSTrayUI;
 
@@ -31,6 +32,8 @@ public sealed class DeviceAlertSettings
 {
     public string Alias { get; set; } = string.Empty;
     public string LastDeviceName { get; set; } = string.Empty;
+    public DeviceType? LastDeviceType { get; set; }
+    public bool? NumericDisplay { get; set; }
     public int? ThresholdPercent { get; set; }
     public bool? WindowsNotification { get; set; }
     public bool? TrayBlink { get; set; }

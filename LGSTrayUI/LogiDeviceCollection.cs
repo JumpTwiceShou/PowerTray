@@ -79,6 +79,7 @@ namespace LGSTrayUI
                     {
                         x.DeviceId = deviceId!;
                         x.DeviceName = _userSettings.GetOriginalName(deviceId!, string.Empty);
+                        x.DeviceType = _userSettings.GetDeviceType(deviceId!, x.DeviceName);
                         x.IsOnline = false;
                         x.IsChecked = true;
                     })
@@ -165,7 +166,7 @@ namespace LGSTrayUI
                     string canonicalDeviceId = ChooseCanonicalDeviceId(oldDeviceId, initMessage.deviceId);
                     if (canonicalDeviceId == initMessage.deviceId)
                     {
-                        _userSettings.MigrateDeviceId(oldDeviceId, initMessage.deviceId, initMessage.deviceName);
+                        _userSettings.MigrateDeviceId(oldDeviceId, initMessage.deviceId, initMessage.deviceName, initMessage.deviceType);
                         _deviceIdAliases[oldDeviceId] = initMessage.deviceId;
                         equivalentDevice.DeviceId = initMessage.deviceId;
                     }
@@ -239,7 +240,7 @@ namespace LGSTrayUI
 
             foreach (LogiDeviceViewModel duplicate in duplicates)
             {
-                _userSettings.MigrateDeviceId(duplicate.DeviceId, activeDevice.DeviceId, activeDevice.DeviceName);
+                _userSettings.MigrateDeviceId(duplicate.DeviceId, activeDevice.DeviceId, activeDevice.DeviceName, activeDevice.DeviceType);
                 _missedPresenceChecks.Remove(duplicate.DeviceId);
                 Devices.Remove(duplicate);
             }

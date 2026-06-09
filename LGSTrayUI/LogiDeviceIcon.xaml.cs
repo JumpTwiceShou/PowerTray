@@ -49,6 +49,7 @@ namespace LGSTrayUI
                     _alertState.Changed -= OnAlertStateChanged;
                     _device.PropertyChanged -= LogiDevicePropertyChanged;
                     _userSettings.PropertyChanged -= NotifyIconViewModelPropertyChanged;
+                    _userSettings.DeviceSettingsChanged -= UserSettingsDeviceSettingsChanged;
                     CheckTheme.StaticPropertyChanged -= CheckThemePropertyChanged;
                     taskbarIcon.TrayToolTipOpen -= OnTrayToolTipOpen;
                     taskbarIcon.TrayToolTipClose -= OnTrayToolTipClose;
@@ -97,7 +98,7 @@ namespace LGSTrayUI
         private static readonly List<LogiDeviceIcon> ActiveIcons = [];
         private static readonly object ActiveIconsLock = new();
 
-        private Action<TaskbarIcon, LogiDevice> _drawBatteryIcon;
+        private Action<TaskbarIcon, LogiDevice> _drawBatteryIcon = BatteryIconDrawing.DrawIcon;
         private readonly AlertStateService _alertState;
         private readonly LogiDevice _device;
         private readonly UserSettingsWrapper _userSettings;
@@ -120,8 +121,9 @@ namespace LGSTrayUI
 
             device.PropertyChanged += LogiDevicePropertyChanged;
             userSettings.PropertyChanged += NotifyIconViewModelPropertyChanged;
+            userSettings.DeviceSettingsChanged += UserSettingsDeviceSettingsChanged;
             CheckTheme.StaticPropertyChanged += CheckThemePropertyChanged;
-            _drawBatteryIcon = userSettings.NumericDisplay ? BatteryIconDrawing.DrawNumeric : BatteryIconDrawing.DrawIcon;
+            RefreshDrawBatteryIcon();
             _blinkTimer = new DispatcherTimer
             {
                 Interval = TimeSpan.FromMilliseconds(500),
@@ -248,9 +250,25 @@ namespace LGSTrayUI
 
             if (e.PropertyName == nameof(UserSettingsWrapper.NumericDisplay))
             {
-                _drawBatteryIcon = userSettings.NumericDisplay ? BatteryIconDrawing.DrawNumeric : BatteryIconDrawing.DrawIcon;
+                RefreshDrawBatteryIcon();
                 DrawBatteryIcon();
             }
+        }
+
+        private void UserSettingsDeviceSettingsChanged(string deviceId)
+        {
+            if (string.IsNullOrEmpty(deviceId) || deviceId == _device.DeviceId)
+            {
+                RefreshDrawBatteryIcon();
+                DrawBatteryIcon();
+            }
+        }
+
+        private void RefreshDrawBatteryIcon()
+        {
+            _drawBatteryIcon = _userSettings.GetDeviceNumericDisplay(_device.DeviceId)
+                ? BatteryIconDrawing.DrawNumeric
+                : BatteryIconDrawing.DrawIcon;
         }
 
         private void CheckThemePropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -272,6 +290,7 @@ namespace LGSTrayUI
                 or nameof(LogiDevice.DeviceType)
                 or nameof(LogiDevice.DeviceId))
             {
+                RefreshDrawBatteryIcon();
                 DrawBatteryIcon();
             }
             else if (e.PropertyName == nameof(LogiDeviceViewModel.DisplayToolTipString))

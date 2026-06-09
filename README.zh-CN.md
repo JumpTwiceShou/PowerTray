@@ -72,14 +72,28 @@ PowerTray 是基于 [andyvorld/LGSTrayBattery](https://github.com/andyvorld/LGST
 
 原生后端已验证：
 
-- `PRO X2 SUPERSTRIKE Wireless Mouse`
-- `PRO X 2 Lightspeed Gaming Headset`
+| 设备 | 状态 | 说明 |
+| --- | --- | --- |
+| `PRO X2 SUPERSTRIKE Wireless Mouse` | 已验证 | 通过 LIGHTSPEED 接收器读取原生 HID++ 电量。 |
+| `PRO X 2 Lightspeed Gaming Headset` | 已验证 | 原生耳机电量读取已验证。 |
+| G533 / G535 / G733 / G935 / PRO X Wireless 耳机 | 已按产品 ID 识别 | 只有设备暴露兼容 HID++ 电量功能时才可用。 |
+| G522 LIGHTSPEED | 已实现，未实机验证 | 已实现 Centurion `0x50` 传输和 `0x0104` 电量读取。 |
 
 原生后端已显式识别 G533、G535、G733、G935 和 PRO X Wireless 耳机产品 ID。G733 这类耳机在可用时通过 `0x1F20 ADC MEASUREMENT` 读取电量。
 
 G522 LIGHTSPEED 已实现 Centurion `0x50` 传输和 `0x0104` 电量读取，但此版本没有用 G522 实机验证。
 
 其他 Logitech HID++ 设备如果通过兼容 HID++ 端点暴露受支持的电量功能（`0x1000`、`0x1001`、`0x1004`、`0x1F20`），也可能可用。
+
+## 定位和限制
+
+PowerTray 是轻量的电量/状态托盘工具，不是 Logitech G Hub 的完整替代品。它不负责按键映射、配置文件、宏、灯光、固件更新、Dolby/Atmos 设置或其他设备配置功能。
+
+PowerTray 不需要 Logitech G Hub 后端，也不会修改 Logitech 驱动或设备配置。设备是否可用取决于 Windows 是否暴露兼容的 Logitech HID++ 端点，以及设备是否上报受支持的电量功能。
+
+## 隐私和本地行为
+
+PowerTray 读取本机 HID++ 电量数据，并将用户设置保存到 `%APPDATA%\PowerTray`。HTTP API 面向本机使用，默认绑定到 `localhost`。PowerTray 不收集遥测数据；如果启用自动检查更新，它会访问本仓库的 GitHub Releases API。
 
 ## 安装
 
@@ -90,6 +104,7 @@ G522 LIGHTSPEED 已实现 Centurion `0x50` 传输和 `0x0104` 电量读取，但
 - 初始语言：English 或简体中文。
 - 安装位置。
 - 是否开机自启。
+- 是否自动检查更新。
 - 安装完成后是否立即启动 PowerTray。
 
 用户设置保存于：
@@ -108,6 +123,14 @@ G522 LIGHTSPEED 已实现 Centurion `0x50` 传输和 `0x0104` 电量读取，但
 - 诊断：G Hub 进程状态、`localhost:9010` 可达性、设备更新时间、提醒配置摘要和诊断导出。
 
 设备别名只影响界面和通知。HTTP XML API 仍输出罗技原始设备名。
+
+## 排障
+
+- 如果没有发现受支持设备，请重新插拔接收器或设备，然后在托盘菜单中选择“重新扫描设备”。
+- 如果 G733 等耳机没有显示电量，可能是该设备在当前 Windows HID 端点上没有暴露兼容的 HID++ 电量功能。
+- 如果轻量安装器提示缺少 .NET 8 Desktop Runtime，请先安装运行时，或改用 `PowerTraySetup-full.exe`。
+- 如果 HTTP API 无法访问，请检查是否已有其他本地进程占用了 `12321` 端口。
+- PowerTray 不需要 G Hub。即使已安装 G Hub，默认也会通过原生后端读取电量，并且不会修改 Logitech 驱动、配置文件或按键设置。
 
 ## HTTP API
 

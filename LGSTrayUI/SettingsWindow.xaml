@@ -7,9 +7,9 @@
         mc:Ignorable="d"
         Title="{Binding Loc[SettingsTitle]}"
         Width="940"
-        Height="660"
+        Height="700"
         MinWidth="940"
-        MinHeight="660"
+        MinHeight="700"
         WindowStartupLocation="CenterScreen"
         Background="{DynamicResource WindowBackgroundBrush}">
     <Window.Resources>
@@ -89,6 +89,79 @@
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+        </Style>
+
+        <ControlTemplate x:Key="DiagnosticsScrollThumbTemplate" TargetType="Thumb">
+            <Border x:Name="ThumbBorder"
+                    Margin="2"
+                    CornerRadius="4"
+                    Background="#9AA3AE"/>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter TargetName="ThumbBorder" Property="Background" Value="#748091"/>
+                </Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
+
+        <Style x:Key="DiagnosticsScrollRepeatButton" TargetType="RepeatButton">
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="OverridesDefaultStyle" Value="True"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RepeatButton">
+                        <Border Background="Transparent"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <ControlTemplate x:Key="DiagnosticsVerticalScrollBarTemplate" TargetType="ScrollBar">
+            <Grid Background="{TemplateBinding Background}" Width="{TemplateBinding Width}">
+                <Track x:Name="PART_Track" IsDirectionReversed="True">
+                    <Track.DecreaseRepeatButton>
+                        <RepeatButton Command="{x:Static ScrollBar.PageUpCommand}" Style="{StaticResource DiagnosticsScrollRepeatButton}"/>
+                    </Track.DecreaseRepeatButton>
+                    <Track.Thumb>
+                        <Thumb MinHeight="36" Template="{StaticResource DiagnosticsScrollThumbTemplate}"/>
+                    </Track.Thumb>
+                    <Track.IncreaseRepeatButton>
+                        <RepeatButton Command="{x:Static ScrollBar.PageDownCommand}" Style="{StaticResource DiagnosticsScrollRepeatButton}"/>
+                    </Track.IncreaseRepeatButton>
+                </Track>
+            </Grid>
+        </ControlTemplate>
+
+        <ControlTemplate x:Key="DiagnosticsHorizontalScrollBarTemplate" TargetType="ScrollBar">
+            <Grid Background="{TemplateBinding Background}" Height="{TemplateBinding Height}">
+                <Track x:Name="PART_Track">
+                    <Track.DecreaseRepeatButton>
+                        <RepeatButton Command="{x:Static ScrollBar.PageLeftCommand}" Style="{StaticResource DiagnosticsScrollRepeatButton}"/>
+                    </Track.DecreaseRepeatButton>
+                    <Track.Thumb>
+                        <Thumb MinWidth="36" Template="{StaticResource DiagnosticsScrollThumbTemplate}"/>
+                    </Track.Thumb>
+                    <Track.IncreaseRepeatButton>
+                        <RepeatButton Command="{x:Static ScrollBar.PageRightCommand}" Style="{StaticResource DiagnosticsScrollRepeatButton}"/>
+                    </Track.IncreaseRepeatButton>
+                </Track>
+            </Grid>
+        </ControlTemplate>
+
+        <Style x:Key="DiagnosticsScrollBarStyle" TargetType="ScrollBar">
+            <Setter Property="Width" Value="9"/>
+            <Setter Property="MinWidth" Value="9"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Template" Value="{StaticResource DiagnosticsVerticalScrollBarTemplate}"/>
+            <Style.Triggers>
+                <Trigger Property="Orientation" Value="Horizontal">
+                    <Setter Property="Width" Value="Auto"/>
+                    <Setter Property="MinWidth" Value="0"/>
+                    <Setter Property="Height" Value="9"/>
+                    <Setter Property="MinHeight" Value="9"/>
+                    <Setter Property="Template" Value="{StaticResource DiagnosticsHorizontalScrollBarTemplate}"/>
+                </Trigger>
+            </Style.Triggers>
         </Style>
 
         <Style TargetType="ComboBoxItem">
@@ -386,7 +459,7 @@
         <BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter"/>
     </Window.Resources>
 
-    <Grid Margin="22,18,22,20">
+    <Grid Margin="22,18,0,20">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
@@ -409,6 +482,9 @@
 
             <Grid Grid.Column="1" Margin="16,0,0,0">
                 <ScrollViewer>
+                    <ScrollViewer.Resources>
+                        <Style TargetType="{x:Type ScrollBar}" BasedOn="{StaticResource DiagnosticsScrollBarStyle}"/>
+                    </ScrollViewer.Resources>
                     <ScrollViewer.Style>
                         <Style TargetType="ScrollViewer" BasedOn="{StaticResource PageScrollViewer}">
                             <Style.Triggers>
@@ -418,7 +494,7 @@
                             </Style.Triggers>
                         </Style>
                     </ScrollViewer.Style>
-                    <StackPanel>
+                    <StackPanel Margin="0,0,22,0">
                         <Border Style="{StaticResource PanelBorder}">
                             <StackPanel>
                                 <TextBlock Text="{Binding Loc[Language]}" FontSize="16" FontWeight="SemiBold"/>
@@ -441,6 +517,9 @@
                 </ScrollViewer>
 
                 <ScrollViewer>
+                    <ScrollViewer.Resources>
+                        <Style TargetType="{x:Type ScrollBar}" BasedOn="{StaticResource DiagnosticsScrollBarStyle}"/>
+                    </ScrollViewer.Resources>
                     <ScrollViewer.Style>
                         <Style TargetType="ScrollViewer" BasedOn="{StaticResource PageScrollViewer}">
                             <Style.Triggers>
@@ -450,12 +529,12 @@
                             </Style.Triggers>
                         </Style>
                     </ScrollViewer.Style>
-                    <StackPanel>
+                    <StackPanel Margin="0,0,22,0">
                         <Border Style="{StaticResource PanelBorder}">
                             <StackPanel>
                                 <TextBlock Text="{Binding Loc[GlobalDefaults]}" FontSize="16" FontWeight="SemiBold"/>
                                 <TextBlock Text="{Binding Loc[DefaultThreshold]}" Margin="0,12,0,2"/>
-                                <Grid Width="390" HorizontalAlignment="Left">
+                                <Grid Width="312" HorizontalAlignment="Left">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="68"/>
@@ -496,6 +575,9 @@
                 </ScrollViewer>
 
                 <ScrollViewer>
+                    <ScrollViewer.Resources>
+                        <Style TargetType="{x:Type ScrollBar}" BasedOn="{StaticResource DiagnosticsScrollBarStyle}"/>
+                    </ScrollViewer.Resources>
                     <ScrollViewer.Style>
                         <Style TargetType="ScrollViewer" BasedOn="{StaticResource PageScrollViewer}">
                             <Style.Triggers>
@@ -505,19 +587,25 @@
                             </Style.Triggers>
                         </Style>
                     </ScrollViewer.Style>
-                    <StackPanel>
+                    <StackPanel Margin="0,0,13,0">
                         <TextBlock Text="{Binding Loc[NoDevices]}" Visibility="{Binding DeviceItems.Count, Converter={StaticResource CountToVisibilityConverter}, FallbackValue=Collapsed}"/>
                         <ItemsControl ItemsSource="{Binding DeviceItems}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
                                     <Border Style="{StaticResource PanelBorder}">
-                                        <StackPanel>
-                                            <StackPanel Orientation="Horizontal">
-                                                <TextBlock Text="{Binding DisplayName}" FontSize="16" FontWeight="SemiBold" Foreground="{DynamicResource TextBrush}"/>
-                                                <Border Style="{StaticResource MetaPill}" Padding="8,3" Margin="10,0,0,0" Visibility="{Binding IsOffline, Converter={StaticResource BoolToVisibilityConverter}}">
-                                                    <TextBlock Text="{Binding Loc[Offline]}" Foreground="{DynamicResource MutedTextBrush}" FontSize="12" FontWeight="SemiBold"/>
-                                                </Border>
-                                            </StackPanel>
+                                            <StackPanel>
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="{Binding DisplayName}" FontSize="16" FontWeight="SemiBold" Foreground="{DynamicResource TextBrush}"/>
+                                                    <Border Style="{StaticResource MetaPill}" Padding="8,3" Margin="10,0,0,0" Visibility="{Binding IsOffline, Converter={StaticResource BoolToVisibilityConverter}}">
+                                                        <TextBlock Text="{Binding Loc[Offline]}" Foreground="{DynamicResource MutedTextBrush}" FontSize="12" FontWeight="SemiBold"/>
+                                                    </Border>
+                                                    <Button Content="{Binding Loc[RemoveHistory]}"
+                                                            Command="{Binding RemoveHistoryCommand}"
+                                                            Visibility="{Binding IsOffline, Converter={StaticResource BoolToVisibilityConverter}}"
+                                                            Margin="2,-2,0,0"
+                                                            Padding="10,4"
+                                                            MinHeight="0"/>
+                                                </StackPanel>
                                             <TextBlock Visibility="{Binding ShowOriginalName, Converter={StaticResource BoolToVisibilityConverter}}"
                                                        Foreground="{DynamicResource MutedTextBrush}"
                                                        Margin="0,2,0,0">
@@ -529,7 +617,7 @@
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="230"/>
                                                     <ColumnDefinition Width="24"/>
-                                                    <ColumnDefinition Width="390"/>
+                                                    <ColumnDefinition Width="312"/>
                                                 </Grid.ColumnDefinitions>
                                                 <Grid.RowDefinitions>
                                                     <RowDefinition Height="Auto"/>
@@ -585,14 +673,21 @@
                                                     </StackPanel>
                                                 </Border>
                                             </WrapPanel>
-                                            <CheckBox Content="{Binding Loc[WindowsNotification]}" IsChecked="{Binding WindowsNotification}"/>
-                                            <CheckBox Content="{Binding Loc[TrayBlink]}" IsChecked="{Binding TrayBlink}"/>
-                                            <WrapPanel Margin="0,8,0,0">
-                                                <Button Content="{Binding Loc[TestNotification]}" Command="{Binding TestNotificationCommand}"/>
-                                                <Button Content="{Binding Loc[TestBlink]}" Command="{Binding TestBlinkCommand}"/>
-                                                <Button Content="{Binding Loc[RestoreDefaults]}" Command="{Binding RestoreDefaultsCommand}"/>
-                                                <Button Content="{Binding Loc[RemoveHistory]}" Command="{Binding RemoveHistoryCommand}" Visibility="{Binding IsOffline, Converter={StaticResource BoolToVisibilityConverter}}"/>
-                                            </WrapPanel>
+                                            <Grid Margin="0,8,0,0" HorizontalAlignment="Left">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="220"/>
+                                                    <ColumnDefinition Width="8"/>
+                                                    <ColumnDefinition Width="300"/>
+                                                </Grid.ColumnDefinitions>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                </Grid.RowDefinitions>
+                                                <CheckBox Grid.Row="0" Grid.Column="0" Content="{Binding Loc[FollowGlobalNumericIcon]}" IsChecked="{Binding FollowGlobalNumericDisplay}"/>
+                                                <CheckBox Grid.Row="0" Grid.Column="2" Content="{Binding Loc[WindowsNotification]}" IsChecked="{Binding WindowsNotification}"/>
+                                                <CheckBox Grid.Row="1" Grid.Column="0" Content="{Binding Loc[NumericIcon]}" IsChecked="{Binding NumericDisplay}" IsEnabled="{Binding IsCustomNumericDisplay}"/>
+                                                <CheckBox Grid.Row="1" Grid.Column="2" Content="{Binding Loc[TrayBlink]}" IsChecked="{Binding TrayBlink}"/>
+                                            </Grid>
                                             <WrapPanel>
                                                 <Button Content="{Binding Loc[PauseOneHour]}" Command="{Binding PauseOneHourCommand}"/>
                                                 <Button Content="{Binding Loc[PauseUntilNextLaunch]}" Command="{Binding PauseUntilNextLaunchCommand}"/>
@@ -607,43 +702,59 @@
                     </StackPanel>
                 </ScrollViewer>
 
-                <ScrollViewer>
-                    <ScrollViewer.Style>
-                        <Style TargetType="ScrollViewer" BasedOn="{StaticResource PageScrollViewer}">
+                <Grid Margin="0,0,22,0">
+                    <Grid.Style>
+                        <Style TargetType="Grid">
+                            <Setter Property="Visibility" Value="Collapsed"/>
                             <Style.Triggers>
                                 <DataTrigger Binding="{Binding SelectedIndex, ElementName=SettingsNavigation}" Value="3">
                                     <Setter Property="Visibility" Value="Visible"/>
                                 </DataTrigger>
                             </Style.Triggers>
                         </Style>
-                    </ScrollViewer.Style>
-                    <StackPanel>
-                        <Border Style="{StaticResource PanelBorder}">
-                            <StackPanel>
-                                <TextBlock Text="{Binding Loc[Diagnostics]}" FontSize="16" FontWeight="SemiBold"/>
-                                <TextBlock Text="{Binding Loc[ReleaseVersion], StringFormat={}{0}:}" Margin="0,8,0,0"/>
-                                <TextBlock Text="{Binding CurrentVersion}" FontWeight="SemiBold"/>
-                                <TextBlock Text="{Binding Loc[GHubStatus], StringFormat={}{0}:}"/>
-                                <TextBlock Text="{Binding GHubStatus}" FontWeight="SemiBold"/>
-                                <TextBlock Text="{Binding Loc[Port9010Status], StringFormat={}{0}:}" Margin="0,8,0,0"/>
-                                <TextBlock Text="{Binding Port9010Status}" FontWeight="SemiBold"/>
-                                <WrapPanel Margin="0,12,0,0">
-                                    <Button Content="{Binding Loc[RefreshDiagnostics]}" Command="{Binding RefreshDiagnosticsCommand}"/>
-                                    <Button Content="{Binding Loc[ExportDiagnostics]}" Command="{Binding ExportDiagnosticsCommand}"/>
-                                    <Button Content="{Binding Loc[MenuCheckUpdates]}" Command="{Binding CheckForUpdatesCommand}"/>
-                                </WrapPanel>
-                            </StackPanel>
-                        </Border>
+                    </Grid.Style>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0" Style="{StaticResource PanelBorder}">
+                        <StackPanel>
+                            <TextBlock Text="{Binding Loc[Diagnostics]}" FontSize="16" FontWeight="SemiBold"/>
+                            <TextBlock Text="{Binding Loc[ReleaseVersion], StringFormat={}{0}:}" Margin="0,8,0,0"/>
+                            <TextBlock Text="{Binding CurrentVersion}" FontWeight="SemiBold"/>
+                            <TextBlock Text="{Binding Loc[GHubStatus], StringFormat={}{0}:}"/>
+                            <TextBlock Text="{Binding GHubStatus}" FontWeight="SemiBold"/>
+                            <TextBlock Text="{Binding Loc[Port9010Status], StringFormat={}{0}:}" Margin="0,8,0,0"/>
+                            <TextBlock Text="{Binding Port9010Status}" FontWeight="SemiBold"/>
+                            <WrapPanel Margin="0,12,0,0">
+                                <Button Content="{Binding Loc[RefreshDiagnostics]}" Command="{Binding RefreshDiagnosticsCommand}"/>
+                                <Button Content="{Binding Loc[ExportDiagnostics]}" Command="{Binding ExportDiagnosticsCommand}"/>
+                                <Button Content="{Binding Loc[MenuCheckUpdates]}" Command="{Binding CheckForUpdatesCommand}"/>
+                                <Button Content="{Binding Loc[TestNotification]}" Command="{Binding TestNotificationCommand}"/>
+                                <Button Content="{Binding Loc[TestBlink]}" Command="{Binding TestBlinkAllCommand}"/>
+                                <Button Content="{Binding Loc[StopBlink]}" Command="{Binding StopBlinkCommand}"/>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+                    <Border Grid.Row="1" Style="{StaticResource PanelBorder}" Padding="0" Margin="0">
                         <TextBox Text="{Binding DiagnosticSummary}"
                                  AcceptsReturn="True"
                                  IsReadOnly="True"
                                  TextWrapping="NoWrap"
                                  VerticalScrollBarVisibility="Auto"
                                  HorizontalScrollBarVisibility="Auto"
-                                 Height="320"
-                                 FontFamily="Consolas"/>
-                    </StackPanel>
-                </ScrollViewer>
+                                 Margin="0"
+                                 Padding="14,12,0,12"
+                                 BorderThickness="0"
+                                 Background="Transparent"
+                                 FontFamily="Consolas">
+                            <TextBox.Resources>
+                                <Style TargetType="ScrollBar" BasedOn="{StaticResource DiagnosticsScrollBarStyle}"/>
+                            </TextBox.Resources>
+                        </TextBox>
+                    </Border>
+                </Grid>
             </Grid>
         </Grid>
     </Grid>

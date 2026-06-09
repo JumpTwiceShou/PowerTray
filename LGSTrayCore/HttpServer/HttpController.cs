@@ -1,6 +1,7 @@
 ﻿using EmbedIO.Routing;
 using EmbedIO;
 using EmbedIO.WebApi;
+using System.Net;
 using System.Reflection;
 
 namespace LGSTrayCore.HttpServer;
@@ -35,7 +36,6 @@ public class HttpController : WebApiController
         Response.ContentType = contentType;
         Response.DisableCaching();
         Response.KeepAlive = false;
-        Response.Headers.Add("Access-Control-Allow-Origin", "*");
     }
 
     [Route(HttpVerbs.Get, "/")]
@@ -51,13 +51,17 @@ public class HttpController : WebApiController
         tw.Write("<b>By Device ID</b><br>");
         foreach (var logiDevice in devices)
         {
-            tw.Write($"{logiDevice.DeviceName} : <a href=\"/device/{logiDevice.DeviceId}\">{logiDevice.DeviceId}</a><br>");
+            string deviceName = WebUtility.HtmlEncode(logiDevice.DeviceName);
+            string deviceId = WebUtility.HtmlEncode(logiDevice.DeviceId);
+            string deviceIdRoute = Uri.EscapeDataString(logiDevice.DeviceId);
+            tw.Write($"{deviceName} : <a href=\"/device/{deviceIdRoute}\">{deviceId}</a><br>");
         }
 
         tw.Write("<br><b>By Device Name</b><br>");
         foreach (var logiDevice in devices)
         {
-            tw.Write($"<a href=\"/device/{Uri.EscapeDataString(logiDevice.DeviceName)}\">{logiDevice.DeviceName}</a><br>");
+            string deviceName = WebUtility.HtmlEncode(logiDevice.DeviceName);
+            tw.Write($"<a href=\"/device/{Uri.EscapeDataString(logiDevice.DeviceName)}\">{deviceName}</a><br>");
         }
 
         tw.Write("<br><hr>");
@@ -77,6 +81,7 @@ public class HttpController : WebApiController
         using var tw = HttpContext.OpenResponseText();
         if (logiDevice == null)
         {
+            DefaultResponse("text/plain");
             HttpContext.Response.StatusCode = 404;
             tw.Write($"{deviceIden} not found.");
             return;

@@ -1,5 +1,7 @@
 ﻿using CommunityToolkit.Mvvm.ComponentModel;
 using LGSTrayPrimitives;
+using System.Globalization;
+using System.Security;
 
 namespace LGSTrayCore
 {
@@ -71,16 +73,21 @@ namespace LGSTrayCore
             return
                 $"<?xml version=\"1.0\" encoding=\"UTF-8\"?>" +
                 $"<xml>" +
-                $"<device_id>{DeviceId}</device_id>" +
-                $"<device_name>{DeviceName}</device_name>" +
-                $"<device_type>{DeviceType}</device_type>" +
-                $"<battery_percent>{BatteryPercentage:f2}</battery_percent>" +
-                $"<battery_voltage>{BatteryVoltage:f2}</battery_voltage>" +
-                $"<mileage>{BatteryMileage:f2}</mileage>" +
+                $"<device_id>{XmlEscape(DeviceId)}</device_id>" +
+                $"<device_name>{XmlEscape(DeviceName)}</device_name>" +
+                $"<device_type>{XmlEscape(DeviceType.ToString())}</device_type>" +
+                $"<battery_percent>{BatteryPercentage.ToString("f2", CultureInfo.InvariantCulture)}</battery_percent>" +
+                $"<battery_voltage>{BatteryVoltage.ToString("f2", CultureInfo.InvariantCulture)}</battery_voltage>" +
+                $"<mileage>{BatteryMileage.ToString("f2", CultureInfo.InvariantCulture)}</mileage>" +
                 $"<charging>{PowerSupplyStatus == PowerSupplyStatus.POWER_SUPPLY_STATUS_CHARGING}</charging>" +
-                $"<last_update>{LastUpdate}</last_update>" +
+                $"<last_update>{XmlEscape(LastUpdate.ToString("o", CultureInfo.InvariantCulture))}</last_update>" +
                 $"</xml>"
                 ;
+        }
+
+        private static string XmlEscape(string? value)
+        {
+            return SecurityElement.Escape(value ?? string.Empty) ?? string.Empty;
         }
     }
 }

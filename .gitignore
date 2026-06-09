@@ -1,5 +1,8 @@
 HIDPP_Bat_Mon/**
 
+# Local session memory, not intended for GitHub
+memory/
+
 # Native HID CPP daemon libs
 LGSTrayNative_cpp/**
 
