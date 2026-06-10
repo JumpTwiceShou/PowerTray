@@ -21,7 +21,6 @@ namespace LGSTrayUI
         private readonly SettingsWindowFactory _settingsWindowFactory;
         private readonly AlertManager _alertManager;
         private readonly UpdateService _updateService;
-        private readonly IHostApplicationLifetime _appLifetime;
         private readonly LogiDeviceCollection _deviceCollection;
         private readonly SemaphoreSlim _rediscoverSemaphore = new(1, 1);
         private CancellationTokenSource? _presenceCts;
@@ -81,8 +80,7 @@ namespace LGSTrayUI
             LocalizationService loc,
             SettingsWindowFactory settingsWindowFactory,
             AlertManager alertManager,
-            UpdateService updateService,
-            IHostApplicationLifetime appLifetime
+            UpdateService updateService
         )
         {
             _mainTaskbarIconWrapper = mainTaskbarIconWrapper;
@@ -96,14 +94,13 @@ namespace LGSTrayUI
             _settingsWindowFactory = settingsWindowFactory;
             _alertManager = alertManager;
             _updateService = updateService;
-            _appLifetime = appLifetime;
             _alertManager.SetDevices(_logiDevices);
         }
 
         [RelayCommand]
-        private void ExitApplication()
+        private static void ExitApplication()
         {
-            _appLifetime.StopApplication();
+            Environment.Exit(0);
         }
 
         [RelayCommand]

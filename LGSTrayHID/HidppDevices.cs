@@ -53,6 +53,7 @@ namespace LGSTrayHID
         private byte _centurionReportId = CENTURION_REPORT_ID;
         private byte? _centurionDeviceAddress;
         private int _centurionProbeAttempts;
+        private int _preferC54dLongReports;
         private readonly HashSet<string> _offlineSignalledDeviceIds = [];
         private int _disposeCount;
         private int _started;
@@ -326,8 +327,14 @@ namespace LGSTrayHID
             }
         }
 
-        private static IEnumerable<byte> GetProbeDeviceIndexes(bool receiverResponded)
+        private IEnumerable<byte> GetProbeDeviceIndexes(bool receiverResponded)
         {
+            if (_shortEndpoint.ProductId == LIGHTSPEED_C54D_RECEIVER)
+            {
+                yield return 1;
+                yield break;
+            }
+
             if (!receiverResponded)
             {
                 yield return 0xFF;
@@ -1009,12 +1016,29 @@ namespace LGSTrayHID
             {
                 for (int attempt = 1; attempt <= attempts; attempt++)
                 {
+                    if (c54dShortRequest && Volatile.Read(ref _preferC54dLongReports) == 1)
+                    {
+                        Hidpp20 longRet = await TryC54dLongReportFallbackAsync(buffer, request, commandTimeout, ignoreHID10, attempt);
+                        if (longRet.Length > 0)
+                        {
+                            return longRet;
+                        }
+                    }
+
                     HidDevicePtr writeDevice = targetsShortEndpoint ? _devShort : hidDevicePtr;
                     int written = await writeDevice.WriteAsync(request);
                     if (written <= 0)
                     {
                         RecordTransportFailure("hidWriteFailed", request, attempt);
-                        if (targetsShortEndpoint)
+                        if (c54dShortRequest)
+                        {
+                            Hidpp20 fallbackRet = await TryC54dLongReportFallbackAsync(buffer, request, commandTimeout, ignoreHID10, attempt);
+                            if (fallbackRet.Length > 0)
+                            {
+                                return fallbackRet;
+                            }
+                        }
+                        else if (targetsShortEndpoint)
                         {
                             ReopenShortEndpoint("hidWriteFailed");
                         }
@@ -1026,6 +1050,7 @@ namespace LGSTrayHID
                     Hidpp20 ret = await ReadMatchingHidpp20Async(buffer, commandTimeout, ignoreHID10, c54dShortRequest);
                     if (ret.Length > 0)
                     {
+                        MarkC54dLongReportPreference(c54dShortRequest, ret);
                         if (c54dShortRequest && ret.GetFeatureIndex() == 0x8F)
                         {
                             RecordTransportFailure("hidProtocolError", request, attempt);
@@ -1126,7 +1151,6 @@ namespace LGSTrayHID
             if (written <= 0)
             {
                 RecordTransportFailure("hidLongWriteFailed", longRequest, attempt);
-                ReopenLongEndpoint("hidLongWriteFailed");
                 return (Hidpp20)Array.Empty<byte>();
             }
 
@@ -1143,7 +1167,16 @@ namespace LGSTrayHID
                 return (Hidpp20)Array.Empty<byte>();
             }
 
+            MarkC54dLongReportPreference(true, ret);
             return ret;
+        }
+
+        private void MarkC54dLongReportPreference(bool c54dShortRequest, Hidpp20 ret)
+        {
+            if (c54dShortRequest && ret.Length > 0 && ret[0] == 0x11)
+            {
+                Volatile.Write(ref _preferC54dLongReports, 1);
+            }
         }
 
         private static byte[] CreateLongReport(byte[] shortRequest)
