@@ -6,9 +6,9 @@
         xmlns:local="clr-namespace:LGSTrayUI"
         mc:Ignorable="d"
         Title="{Binding Loc[SettingsTitle]}"
-        Width="940"
+        Width="880"
         Height="700"
-        MinWidth="940"
+        MinWidth="880"
         MinHeight="700"
         WindowStartupLocation="CenterScreen"
         Background="{DynamicResource WindowBackgroundBrush}">

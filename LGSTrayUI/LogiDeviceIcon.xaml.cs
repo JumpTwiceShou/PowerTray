@@ -53,6 +53,7 @@ namespace LGSTrayUI
                     CheckTheme.StaticPropertyChanged -= CheckThemePropertyChanged;
                     taskbarIcon.TrayToolTipOpen -= OnTrayToolTipOpen;
                     taskbarIcon.TrayToolTipClose -= OnTrayToolTipClose;
+                    TrayContextMenuPlacement.Detach(taskbarIcon);
                     _tooltipCloseTimer.Stop();
                     CloseTrayToolTip();
                 }
@@ -133,6 +134,7 @@ namespace LGSTrayUI
                 Interval = TimeSpan.FromSeconds(4),
             };
             _tooltipCloseTimer.Tick += (_, _) => CloseTrayToolTip();
+            TrayContextMenuPlacement.Attach(taskbarIcon);
             taskbarIcon.TrayToolTipOpen += OnTrayToolTipOpen;
             taskbarIcon.TrayToolTipClose += OnTrayToolTipClose;
             _blinkTimer.Tick += (_, _) =>
