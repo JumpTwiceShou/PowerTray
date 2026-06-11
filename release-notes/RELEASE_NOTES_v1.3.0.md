@@ -1,5 +1,3 @@
-# PowerTray 1.3.0
-
 ## What's New
 
 - Fixed device rediscovery and background service stability issues.

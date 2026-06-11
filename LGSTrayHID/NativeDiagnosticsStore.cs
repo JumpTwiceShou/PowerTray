@@ -52,7 +52,7 @@ internal sealed class DeviceDiscoveryDiagnostic
     public string DeviceIndex { get; set; } = string.Empty;
     public string? DeviceName { get; set; }
     public string? DeviceType { get; set; }
-    public string? Identifier { get; set; }
+    public string? IdentifierHash { get; set; }
     public DeviceIdentityDiagnostic? Identity { get; set; }
     public Dictionary<string, string> FeatureMap { get; set; } = [];
     public string? SelectedBatteryFeature { get; set; }
@@ -62,12 +62,12 @@ internal sealed class DeviceDiscoveryDiagnostic
 internal sealed class DeviceIdentityDiagnostic
 {
     public string Source { get; set; } = string.Empty;
-    public string? UnitId { get; set; }
-    public string? ModelId { get; set; }
+    public string? UnitIdHash { get; set; }
+    public string? ModelIdHash { get; set; }
     public bool SerialNumberSupported { get; set; }
-    public string? SerialNumber { get; set; }
-    public string? DeviceInfoRawResponse { get; set; }
-    public string? SerialRawResponse { get; set; }
+    public string? SerialNumberHash { get; set; }
+    public string? DeviceInfoRawResponseHash { get; set; }
+    public string? SerialRawResponseHash { get; set; }
     public string? FallbackReason { get; set; }
 }
 

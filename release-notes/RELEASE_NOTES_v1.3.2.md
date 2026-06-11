@@ -1,5 +1,3 @@
-# PowerTray 1.3.2
-
 ## What's New
 
 - Restored stable device rediscovery behavior from 1.3.0.

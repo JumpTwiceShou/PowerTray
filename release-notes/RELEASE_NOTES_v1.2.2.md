@@ -1,5 +1,3 @@
-# PowerTray 1.2.2
-
 This release improves native Logitech device detection speed, USB disconnect/reconnect stability, and update-check preferences.
 
 ## Highlights

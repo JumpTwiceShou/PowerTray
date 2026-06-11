@@ -9,6 +9,7 @@ public sealed class PowerTrayUserSettings
     public int SchemaVersion { get; set; } = 1;
     public string Language { get; set; } = "en-US";
     public string ThemeMode { get; set; } = "system";
+    public string UiScaleMode { get; set; } = "standard";
     public bool NumericDisplay { get; set; }
     public bool AutoStart { get; set; }
     public bool AutoCheckUpdates { get; set; } = true;

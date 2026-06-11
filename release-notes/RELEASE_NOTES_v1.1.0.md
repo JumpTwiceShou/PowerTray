@@ -1,5 +1,3 @@
-# PowerTray 1.1.0
-
 This release focuses on bug fixes, stability improvements, and packaging cleanup.
 
 ## Highlights

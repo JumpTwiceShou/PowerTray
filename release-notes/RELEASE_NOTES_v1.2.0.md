@@ -1,5 +1,3 @@
-# PowerTray 1.2.0
-
 This release adds native headset support, richer diagnostics, and fixes device identity collisions.
 
 ## Highlights

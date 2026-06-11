@@ -6,6 +6,7 @@ using Microsoft.Extensions.Hosting;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
@@ -24,6 +25,7 @@ namespace LGSTrayUI
         private readonly LogiDeviceCollection _deviceCollection;
         private readonly SemaphoreSlim _rediscoverSemaphore = new(1, 1);
         private CancellationTokenSource? _presenceCts;
+        private LogiDeviceViewModel? _menuDevice;
 
         public LocalizationService Loc => _loc;
 
@@ -42,8 +44,13 @@ namespace LGSTrayUI
             {
                 _userSettings.NumericDisplay = value;
                 OnPropertyChanged();
+                OnPropertyChanged(nameof(MenuNumericDisplay));
             }
         }
+
+        public bool MenuNumericDisplay => _menuDevice is { } device
+            ? _userSettings.GetDeviceNumericDisplay(device.DeviceId)
+            : _userSettings.NumericDisplay;
 
         public static string AssemblyVersion
         {
@@ -95,6 +102,8 @@ namespace LGSTrayUI
             _alertManager = alertManager;
             _updateService = updateService;
             _alertManager.SetDevices(_logiDevices);
+            _userSettings.PropertyChanged += UserSettingsPropertyChanged;
+            _userSettings.DeviceSettingsChanged += UserSettingsDeviceSettingsChanged;
         }
 
         [RelayCommand]
@@ -118,6 +127,13 @@ namespace LGSTrayUI
         [RelayCommand]
         private void ToggleNumericDisplay()
         {
+            if (_menuDevice is { } device && _userSettings.HasDeviceNumericDisplayOverride(device.DeviceId))
+            {
+                _userSettings.SetDeviceNumericDisplayOverride(device.DeviceId, !_userSettings.GetDeviceNumericDisplay(device.DeviceId));
+                OnPropertyChanged(nameof(MenuNumericDisplay));
+                return;
+            }
+
             NumericDisplay = !NumericDisplay;
         }
 
@@ -200,11 +216,35 @@ namespace LGSTrayUI
             return Task.CompletedTask;
         }
 
+        public void SetMenuDeviceContext(LogiDeviceViewModel? device)
+        {
+            _menuDevice = device;
+            OnPropertyChanged(nameof(MenuNumericDisplay));
+        }
+
+        private void UserSettingsPropertyChanged(object? sender, PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == nameof(UserSettingsWrapper.NumericDisplay))
+            {
+                OnPropertyChanged(nameof(MenuNumericDisplay));
+            }
+        }
+
+        private void UserSettingsDeviceSettingsChanged(string deviceId)
+        {
+            if (_menuDevice == null || string.IsNullOrEmpty(deviceId) || deviceId == _menuDevice.DeviceId)
+            {
+                OnPropertyChanged(nameof(MenuNumericDisplay));
+            }
+        }
+
         public Task StopAsync(CancellationToken cancellationToken)
         {
             _presenceCts?.Cancel();
             _presenceCts?.Dispose();
             _presenceCts = null;
+            _userSettings.PropertyChanged -= UserSettingsPropertyChanged;
+            _userSettings.DeviceSettingsChanged -= UserSettingsDeviceSettingsChanged;
             _mainTaskbarIconWrapper.Dispose();
             return Task.CompletedTask;
         }

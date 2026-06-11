@@ -1321,7 +1321,7 @@ namespace LGSTrayHID
                 DeviceIndex = deviceIndex,
                 DeviceName = deviceName,
                 DeviceType = deviceType.ToString(),
-                Identifier = identifier,
+                IdentifierHash = NativeDiagnosticsStore.HashForDiagnostics(identifier),
                 Identity = identity?.ToDiagnostic(),
                 FeatureMap = NativeDiagnosticsStore.FormatFeatureMap(featureMap),
                 SelectedBatteryFeature = selectedBatteryFeature,
@@ -1330,7 +1330,8 @@ namespace LGSTrayHID
 
             NativeDiagnosticsStore.UpdateSession(_diagnostics, x =>
             {
-                x.Devices.RemoveAll(y => y.Identifier == identifier);
+                string identifierHash = NativeDiagnosticsStore.HashForDiagnostics(identifier);
+                x.Devices.RemoveAll(y => y.IdentifierHash == identifierHash);
                 x.Devices.Add(deviceDiagnostic);
             });
             RegisterKnownDevice(identifier);

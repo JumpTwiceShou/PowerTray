@@ -8,10 +8,14 @@ namespace LGSTrayUI;
 public sealed class ThemeService
 {
     private readonly UserSettingsWrapper _settings;
+    private static string _language = "en-US";
+    private static string _uiScaleMode = "standard";
 
     public ThemeService(UserSettingsWrapper settings)
     {
         _settings = settings;
+        _language = _settings.Language;
+        _uiScaleMode = _settings.UiScaleMode;
         CheckTheme.SetThemeMode(_settings.ThemeMode);
         ApplyCurrentResources();
 
@@ -19,9 +23,23 @@ public sealed class ThemeService
         CheckTheme.StaticPropertyChanged += OnThemeChanged;
     }
 
+    public static double CurrentScale => GetScale(_uiScaleMode);
+
+    public static double GetScale(string? uiScaleMode)
+    {
+        return uiScaleMode?.ToLowerInvariant() switch
+        {
+            "small" => 0.94,
+            "large" => 1.12,
+            "maximum" => 1.25,
+            _ => 1.00,
+        };
+    }
+
     public static void ApplyCurrentResources()
     {
         ApplyPalette(CheckTheme.LightTheme);
+        ApplyTypography(_language, _uiScaleMode);
     }
 
     private void OnSettingsPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -29,6 +47,18 @@ public sealed class ThemeService
         if (e.PropertyName == nameof(UserSettingsWrapper.ThemeMode))
         {
             CheckTheme.SetThemeMode(_settings.ThemeMode);
+            ApplyCurrentResources();
+        }
+
+        if (e.PropertyName == nameof(UserSettingsWrapper.Language))
+        {
+            _language = _settings.Language;
+            ApplyCurrentResources();
+        }
+
+        if (e.PropertyName == nameof(UserSettingsWrapper.UiScaleMode))
+        {
+            _uiScaleMode = _settings.UiScaleMode;
             ApplyCurrentResources();
         }
     }
@@ -90,6 +120,60 @@ public sealed class ThemeService
         resources[SystemColors.HighlightBrushKey] = resources["AccentBrush"];
         resources[SystemColors.HighlightTextBrushKey] = resources["NavigationSelectedTextBrush"];
         resources[SystemColors.GrayTextBrushKey] = resources["DisabledTextBrush"];
+    }
+
+    private static void ApplyTypography(string language, string uiScaleMode)
+    {
+        if (Application.Current == null)
+        {
+            return;
+        }
+
+        double scale = GetScale(uiScaleMode);
+        ResourceDictionary resources = Application.Current.Resources;
+
+        resources["UIFontFamily"] = GetFontFamily(language);
+        resources["UIFontSize"] = 14.0 * scale;
+        resources["UICaptionFontSize"] = 12.5 * scale;
+        resources["UISectionTitleFontSize"] = 16.0 * scale;
+        resources["UIPageTitleFontSize"] = 24.0 * scale;
+        resources["UIDialogTitleFontSize"] = 18.0 * scale;
+        resources["UIDialogDetailFontSize"] = 12.5 * scale;
+        resources["UIMenuFontSize"] = 12.5;
+        resources["UIMonospaceFontSize"] = 12.5 * scale;
+        resources["UIButtonMinHeight"] = 32.0 * scale;
+        resources["UIInputMinHeight"] = 34.0 * scale;
+        resources["UISettingsComboWidth"] = 176.0 * scale;
+        resources["UIComboItemMinHeight"] = 30.0 * scale;
+        resources["UIPercentBadgeWidth"] = 56.0 * scale;
+        resources["UIPercentBadgeHeight"] = 30.0 * scale;
+        resources["UIPercentBadgeCornerRadius"] = new CornerRadius(15.0 * scale);
+        resources["UIThresholdControlWidth"] = 330.0 * scale;
+        resources["UIDeviceFieldWidth"] = 216.0 * scale;
+        resources["UIDeviceThresholdControlWidth"] = 288.0 * scale;
+        resources["UIDeviceOptionColumnWidth"] = 260.0 * scale;
+        resources["UIDeviceOptionColumnGap"] = new GridLength(36.0 * scale);
+        resources["UIDeviceThresholdColumnGap"] = new GridLength(80.0 * scale);
+        resources["UIDeviceTitleMaxWidth"] = 460.0 * scale;
+        resources["UIDeviceTitleLineHeight"] = 22.0 * scale;
+        resources["UIDeviceAliasPadding"] = new Thickness(4.0 * scale, 3.0 * scale, 4.0 * scale, 1.0 * scale);
+        resources["UIDiagnosticsTextPadding"] = new Thickness(7.0 * scale, 7.0 * scale, 0, 0);
+        resources["UIScaleSmallLabelFontSize"] = 12.0;
+        resources["UIScaleStandardLabelFontSize"] = 13.0;
+        resources["UIScaleLargeLabelFontSize"] = 17.0;
+        resources["UIScaleMaximumLabelFontSize"] = 21.0;
+    }
+
+    private static FontFamily GetFontFamily(string language)
+    {
+        return language switch
+        {
+            string value when value.Equals("zh-CN", StringComparison.OrdinalIgnoreCase) =>
+                new FontFamily("Microsoft YaHei UI, Segoe UI, Yu Gothic UI, Meiryo"),
+            string value when value.Equals("ja-JP", StringComparison.OrdinalIgnoreCase) =>
+                new FontFamily("Meiryo UI, Yu Gothic UI, Meiryo, Segoe UI, Microsoft YaHei UI"),
+            _ => new FontFamily("Segoe UI, Microsoft YaHei UI, Yu Gothic UI, Meiryo"),
+        };
     }
 
     private static void Set(ResourceDictionary resources, string key, string color)

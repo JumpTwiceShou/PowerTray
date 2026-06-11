@@ -65,6 +65,23 @@ namespace LGSTrayUI
             }
         }
 
+        public string UiScaleMode
+        {
+            get => NormalizeUiScaleMode(_settings.UiScaleMode);
+            set
+            {
+                string normalized = NormalizeUiScaleMode(value);
+                if (_settings.UiScaleMode == normalized)
+                {
+                    return;
+                }
+
+                _settings.UiScaleMode = normalized;
+                Save();
+                OnPropertyChanged();
+            }
+        }
+
         public bool NumericDisplay
         {
             get => _settings.NumericDisplay;
@@ -331,7 +348,7 @@ namespace LGSTrayUI
 
         public void SetDeviceAlias(string deviceId, string alias)
         {
-            GetDeviceSettings(deviceId).Alias = alias.Trim();
+            GetDeviceSettings(deviceId).Alias = NormalizeAlias(alias);
             SaveDevice(deviceId);
         }
 
@@ -603,6 +620,7 @@ namespace LGSTrayUI
         {
             settings.Language = NormalizeLanguage(settings.Language);
             settings.ThemeMode = NormalizeThemeMode(settings.ThemeMode);
+            settings.UiScaleMode = NormalizeUiScaleMode(settings.UiScaleMode);
             settings.SelectedDevices ??= [];
             settings.SelectedDevices = settings.SelectedDevices
                 .Where(x => !string.IsNullOrWhiteSpace(x))
@@ -624,7 +642,7 @@ namespace LGSTrayUI
 
             foreach (DeviceAlertSettings deviceSettings in settings.Devices.Values)
             {
-                deviceSettings.Alias ??= string.Empty;
+                deviceSettings.Alias = NormalizeAlias(deviceSettings.Alias);
                 deviceSettings.LastDeviceName ??= string.Empty;
                 deviceSettings.LastDeviceType ??= InferDeviceType(deviceSettings.LastDeviceName);
                 if (deviceSettings.ThresholdPercent.HasValue)
@@ -681,7 +699,12 @@ namespace LGSTrayUI
 
         private static string NormalizeLanguage(string? language)
         {
-            return language?.Equals("zh-CN", StringComparison.OrdinalIgnoreCase) == true ? "zh-CN" : "en-US";
+            return language switch
+            {
+                string value when value.Equals("zh-CN", StringComparison.OrdinalIgnoreCase) => "zh-CN",
+                string value when value.Equals("ja-JP", StringComparison.OrdinalIgnoreCase) => "ja-JP",
+                _ => "en-US",
+            };
         }
 
         private static string NormalizeThemeMode(string? themeMode)
@@ -691,6 +714,17 @@ namespace LGSTrayUI
                 "light" => "light",
                 "dark" => "dark",
                 _ => "system",
+            };
+        }
+
+        private static string NormalizeUiScaleMode(string? uiScaleMode)
+        {
+            return uiScaleMode?.ToLowerInvariant() switch
+            {
+                "small" => "small",
+                "large" => "large",
+                "maximum" => "maximum",
+                _ => "standard",
             };
         }
 
@@ -737,6 +771,9 @@ namespace LGSTrayUI
         }
 
         private static int ClampPercent(int value) => Math.Clamp(value, 1, 100);
+
+        private static string NormalizeAlias(string? alias) =>
+            alias?.TrimStart() ?? string.Empty;
 
         private static string NormalizeTime(string value, string fallback)
         {

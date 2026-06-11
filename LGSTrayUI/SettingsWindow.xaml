@@ -5,27 +5,31 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:LGSTrayUI"
         mc:Ignorable="d"
-        Title="{Binding Loc[SettingsTitle]}"
-        Width="880"
-        Height="700"
-        MinWidth="880"
-        MinHeight="700"
+        Title="PowerTray"
+        Width="{Binding WindowWidth, Mode=OneTime}"
+        Height="{Binding WindowHeight, Mode=OneTime}"
+        MinWidth="{Binding WindowMinWidth, Mode=OneTime}"
+        MinHeight="{Binding WindowMinHeight, Mode=OneTime}"
         WindowStartupLocation="CenterScreen"
-        Background="{DynamicResource WindowBackgroundBrush}">
+        Background="{DynamicResource WindowBackgroundBrush}"
+        FontFamily="{DynamicResource UIFontFamily}"
+        FontSize="{DynamicResource UIFontSize}">
     <Window.Resources>
         <Style TargetType="TextBlock">
-            <Setter Property="FontFamily" Value="Segoe UI, Microsoft YaHei UI"/>
+            <Setter Property="FontFamily" Value="{DynamicResource UIFontFamily}"/>
+            <Setter Property="FontSize" Value="{DynamicResource UIFontSize}"/>
             <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
         </Style>
 
         <Style TargetType="Button">
-            <Setter Property="MinHeight" Value="32"/>
+            <Setter Property="MinHeight" Value="{DynamicResource UIButtonMinHeight}"/>
             <Setter Property="Padding" Value="14,7"/>
             <Setter Property="Margin" Value="0,4,8,4"/>
             <Setter Property="Background" Value="{DynamicResource ButtonBackgroundBrush}"/>
             <Setter Property="BorderBrush" Value="{DynamicResource ButtonBorderBrush}"/>
             <Setter Property="Foreground" Value="{DynamicResource ButtonTextBrush}"/>
-            <Setter Property="FontFamily" Value="Segoe UI, Microsoft YaHei UI"/>
+            <Setter Property="FontFamily" Value="{DynamicResource UIFontFamily}"/>
+            <Setter Property="FontSize" Value="{DynamicResource UIFontSize}"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
@@ -56,7 +60,7 @@
         </Style>
 
         <Style TargetType="TextBox">
-            <Setter Property="MinHeight" Value="32"/>
+            <Setter Property="MinHeight" Value="{DynamicResource UIInputMinHeight}"/>
             <Setter Property="Margin" Value="0,4,8,4"/>
             <Setter Property="Padding" Value="9,6"/>
             <Setter Property="BorderBrush" Value="{DynamicResource InputBorderBrush}"/>
@@ -64,7 +68,9 @@
             <Setter Property="Background" Value="{DynamicResource InputBackgroundBrush}"/>
             <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
             <Setter Property="CaretBrush" Value="{DynamicResource TextBrush}"/>
-            <Setter Property="FontFamily" Value="Segoe UI, Microsoft YaHei UI"/>
+            <Setter Property="FontFamily" Value="{DynamicResource UIFontFamily}"/>
+            <Setter Property="FontSize" Value="{DynamicResource UIFontSize}"/>
+            <Setter Property="TextAlignment" Value="Left"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="TextBox">
@@ -89,6 +95,101 @@
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+        </Style>
+
+        <Style x:Key="AliasTextBox" TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+            <Setter Property="Margin" Value="0"/>
+            <Setter Property="Padding" Value="{DynamicResource UIDeviceAliasPadding}"/>
+            <Setter Property="TextAlignment" Value="Left"/>
+            <Setter Property="TextWrapping" Value="NoWrap"/>
+            <Setter Property="AcceptsReturn" Value="False"/>
+            <Setter Property="HorizontalScrollBarVisibility" Value="Hidden"/>
+            <Setter Property="VerticalScrollBarVisibility" Value="Disabled"/>
+        </Style>
+
+        <Style x:Key="ModernTextMenuItem" TargetType="MenuItem">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+            <Setter Property="FontFamily" Value="{DynamicResource UIFontFamily}"/>
+            <Setter Property="FontSize" Value="{DynamicResource UIMenuFontSize}"/>
+            <Setter Property="MinHeight" Value="28"/>
+            <Setter Property="MinWidth" Value="154"/>
+            <Setter Property="Padding" Value="10,0"/>
+            <Setter Property="OverridesDefaultStyle" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="MenuItem">
+                        <Border x:Name="ItemBorder"
+                                Margin="0,1"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="6">
+                            <Grid MinWidth="{TemplateBinding MinWidth}"
+                                  Height="{TemplateBinding MinHeight}"
+                                  Margin="{TemplateBinding Padding}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <ContentPresenter Grid.Column="0"
+                                                  ContentSource="Header"
+                                                  RecognizesAccessKey="True"
+                                                  HorizontalAlignment="Left"
+                                                  VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="1"
+                                           Text="{TemplateBinding InputGestureText}"
+                                           Foreground="{DynamicResource MutedTextBrush}"
+                                           Margin="18,0,0,0"
+                                           VerticalAlignment="Center"/>
+                            </Grid>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="ItemBorder" Property="Background" Value="{DynamicResource MenuHoverBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="{DynamicResource DisabledTextBrush}"/>
+                                <Setter TargetName="ItemBorder" Property="Opacity" Value="0.6"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="ModernTextSeparator" TargetType="Separator">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Separator">
+                        <Border Height="1"
+                                Margin="8,4"
+                                Background="{DynamicResource MenuSeparatorBrush}"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="ModernTextContextMenu" TargetType="ContextMenu">
+            <Setter Property="Background" Value="{DynamicResource MenuBackgroundBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrushSoft}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+            <Setter Property="HasDropShadow" Value="False"/>
+            <Setter Property="OverridesDefaultStyle" Value="True"/>
+            <Setter Property="Padding" Value="3"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ContextMenu">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                Padding="{TemplateBinding Padding}"
+                                SnapsToDevicePixels="True">
+                            <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="ItemContainerStyle" Value="{StaticResource ModernTextMenuItem}"/>
         </Style>
 
         <ControlTemplate x:Key="DiagnosticsScrollThumbTemplate" TargetType="Thumb">
@@ -165,20 +266,22 @@
         </Style>
 
         <Style TargetType="ComboBoxItem">
-            <Setter Property="MinHeight" Value="30"/>
+            <Setter Property="MinHeight" Value="{DynamicResource UIComboItemMinHeight}"/>
             <Setter Property="Padding" Value="10,6"/>
             <Setter Property="Background" Value="{DynamicResource MenuBackgroundBrush}"/>
             <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
-            <Setter Property="FontFamily" Value="Segoe UI, Microsoft YaHei UI"/>
+            <Setter Property="FontFamily" Value="{DynamicResource UIFontFamily}"/>
+            <Setter Property="FontSize" Value="{DynamicResource UIFontSize}"/>
         </Style>
 
         <Style TargetType="ComboBox">
-            <Setter Property="MinHeight" Value="34"/>
+            <Setter Property="MinHeight" Value="{DynamicResource UIInputMinHeight}"/>
             <Setter Property="Padding" Value="10,6"/>
             <Setter Property="BorderBrush" Value="{DynamicResource InputBorderBrush}"/>
             <Setter Property="Background" Value="{DynamicResource InputBackgroundBrush}"/>
             <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
-            <Setter Property="FontFamily" Value="Segoe UI, Microsoft YaHei UI"/>
+            <Setter Property="FontFamily" Value="{DynamicResource UIFontFamily}"/>
+            <Setter Property="FontSize" Value="{DynamicResource UIFontSize}"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ComboBox">
@@ -253,7 +356,8 @@
             <Setter Property="Margin" Value="0,6,0,6"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
             <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
-            <Setter Property="FontFamily" Value="Segoe UI, Microsoft YaHei UI"/>
+            <Setter Property="FontFamily" Value="{DynamicResource UIFontFamily}"/>
+            <Setter Property="FontSize" Value="{DynamicResource UIFontSize}"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="CheckBox">
@@ -338,10 +442,10 @@
         </ControlTemplate>
 
         <Style TargetType="Slider">
-            <Setter Property="Height" Value="38"/>
+            <Setter Property="Height" Value="42"/>
             <Setter Property="MinWidth" Value="180"/>
             <Setter Property="Focusable" Value="False"/>
-            <Setter Property="ClipToBounds" Value="False"/>
+            <Setter Property="ClipToBounds" Value="True"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="{x:Type Slider}">
@@ -388,8 +492,8 @@
             <Setter Property="Margin" Value="0,0,0,8"/>
             <Setter Property="Padding" Value="14,0"/>
             <Setter Property="Foreground" Value="{DynamicResource MutedTextBrush}"/>
-            <Setter Property="FontFamily" Value="Segoe UI, Microsoft YaHei UI"/>
-            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="FontFamily" Value="{DynamicResource UIFontFamily}"/>
+            <Setter Property="FontSize" Value="{DynamicResource UIFontSize}"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ListBoxItem">
@@ -429,14 +533,18 @@
             <Setter Property="Margin" Value="0,0,0,14"/>
         </Style>
 
+        <Style x:Key="DevicePanelBorder" TargetType="Border" BasedOn="{StaticResource PanelBorder}">
+            <Setter Property="Padding" Value="18,10"/>
+        </Style>
+
         <Style x:Key="PercentBadge" TargetType="Border">
-            <Setter Property="MinWidth" Value="58"/>
-            <Setter Property="Height" Value="30"/>
+            <Setter Property="MinWidth" Value="{DynamicResource UIPercentBadgeWidth}"/>
+            <Setter Property="Height" Value="{DynamicResource UIPercentBadgeHeight}"/>
             <Setter Property="Background" Value="{DynamicResource BadgeBackgroundBrush}"/>
             <Setter Property="BorderBrush" Value="{DynamicResource BadgeBorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="CornerRadius" Value="15"/>
-            <Setter Property="Padding" Value="10,0"/>
+            <Setter Property="CornerRadius" Value="{DynamicResource UIPercentBadgeCornerRadius}"/>
+            <Setter Property="Padding" Value="8,0"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
         </Style>
 
@@ -465,7 +573,7 @@
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
-        <TextBlock Text="{Binding Loc[SettingsTitle]}" FontSize="24" FontWeight="SemiBold" Margin="0,0,0,14"/>
+        <TextBlock Text="{Binding Loc[SettingsTitle]}" FontSize="{DynamicResource UIPageTitleFontSize}" FontWeight="SemiBold" Margin="0,0,0,14"/>
 
         <Grid Grid.Row="1">
             <Grid.ColumnDefinitions>
@@ -497,17 +605,111 @@
                     <StackPanel Margin="0,0,22,0">
                         <Border Style="{StaticResource PanelBorder}">
                             <StackPanel>
-                                <TextBlock Text="{Binding Loc[Language]}" FontSize="16" FontWeight="SemiBold"/>
-                                <ComboBox SelectedValue="{Binding Language, Mode=TwoWay}" SelectedValuePath="Tag" Width="260" Margin="0,10,0,10" HorizontalAlignment="Left">
-                                    <ComboBoxItem Tag="en-US" Content="{Binding Loc[English]}"/>
-                                    <ComboBoxItem Tag="zh-CN" Content="{Binding Loc[Chinese]}"/>
+                                <TextBlock Text="{Binding Loc[Language]}" FontSize="{DynamicResource UISectionTitleFontSize}" FontWeight="SemiBold"/>
+                                <ComboBox ItemsSource="{Binding LanguageOptions}"
+                                          SelectedValue="{Binding Language, Mode=TwoWay}"
+                                          SelectedValuePath="Code"
+                                          TextSearch.TextPath="NativeName"
+                                          Width="{DynamicResource UISettingsComboWidth}"
+                                          Margin="0,10,0,10"
+                                          HorizontalAlignment="Left">
+                                    <ComboBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding NativeName}"/>
+                                        </DataTemplate>
+                                    </ComboBox.ItemTemplate>
                                 </ComboBox>
-                                <TextBlock Text="{Binding Loc[Theme]}" FontSize="16" FontWeight="SemiBold" Margin="0,8,0,0"/>
-                                <ComboBox SelectedValue="{Binding ThemeMode, Mode=TwoWay}" SelectedValuePath="Tag" Width="260" Margin="0,10,0,10" HorizontalAlignment="Left">
+                                <TextBlock Text="{Binding Loc[Theme]}" FontSize="{DynamicResource UISectionTitleFontSize}" FontWeight="SemiBold" Margin="0,8,0,0"/>
+                                <ComboBox SelectedValue="{Binding ThemeMode, Mode=TwoWay}" SelectedValuePath="Tag" Width="{DynamicResource UISettingsComboWidth}" Margin="0,10,0,10" HorizontalAlignment="Left">
                                     <ComboBoxItem Tag="system" Content="{Binding Loc[ThemeSystem]}"/>
                                     <ComboBoxItem Tag="light" Content="{Binding Loc[ThemeLight]}"/>
                                     <ComboBoxItem Tag="dark" Content="{Binding Loc[ThemeDark]}"/>
                                 </ComboBox>
+                                <TextBlock Text="{Binding Loc[UiScale]}" FontSize="{DynamicResource UISectionTitleFontSize}" FontWeight="SemiBold" Margin="0,8,0,0"/>
+                                <StackPanel Width="444" Margin="0,10,0,12" HorizontalAlignment="Left">
+                                    <Slider x:Name="UiScaleSlider"
+                                            Width="388"
+                                            HorizontalAlignment="Left"
+                                            Minimum="0"
+                                            Maximum="3"
+                                            IsSnapToTickEnabled="False"
+                                            IsMoveToPointEnabled="True"
+                                            SmallChange="1"
+                                            LargeChange="1"
+                                            Focusable="True"
+                                            PreviewMouseLeftButtonUp="OnUiScaleMouseLeftButtonUp"
+                                            TouchUp="OnUiScaleTouchUp"
+                                            KeyUp="OnUiScaleKeyUp"
+                                            LostFocus="OnUiScaleLostFocus"
+                                            Value="{Binding UiScaleValue, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                    <Canvas Width="360" Height="12" Margin="14,-2,0,0" HorizontalAlignment="Left">
+                                        <Line X1="0" Y1="0" X2="0" Y2="9" Stroke="{DynamicResource AccentBrush}" StrokeThickness="2"/>
+                                        <Line X1="60" Y1="2" X2="60" Y2="7" Stroke="{DynamicResource SliderTrackBrush}" StrokeThickness="2"/>
+                                        <Line X1="120" Y1="0" X2="120" Y2="9" Stroke="{DynamicResource AccentBrush}" StrokeThickness="2"/>
+                                        <Line X1="180" Y1="2" X2="180" Y2="7" Stroke="{DynamicResource SliderTrackBrush}" StrokeThickness="2"/>
+                                        <Line X1="240" Y1="0" X2="240" Y2="9" Stroke="{DynamicResource AccentBrush}" StrokeThickness="2"/>
+                                        <Line X1="300" Y1="2" X2="300" Y2="7" Stroke="{DynamicResource SliderTrackBrush}" StrokeThickness="2"/>
+                                        <Line X1="360" Y1="0" X2="360" Y2="9" Stroke="{DynamicResource AccentBrush}" StrokeThickness="2"/>
+                                    </Canvas>
+                                    <Canvas Width="430" Height="34" Margin="14,0,0,0" HorizontalAlignment="Left">
+                                        <TextBlock Canvas.Left="-65" Width="130" Text="{Binding Loc[UiScaleSmall]}" TextAlignment="Center">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="FontSize" Value="{DynamicResource UIScaleSmallLabelFontSize}"/>
+                                                    <Setter Property="Foreground" Value="{DynamicResource MutedTextBrush}"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding SelectedUiScaleCode}" Value="small">
+                                                            <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                                                            <Setter Property="FontWeight" Value="Bold"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <TextBlock Canvas.Left="55" Width="130" Text="{Binding Loc[UiScaleStandard]}" TextAlignment="Center">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="FontSize" Value="{DynamicResource UIScaleStandardLabelFontSize}"/>
+                                                    <Setter Property="Foreground" Value="{DynamicResource MutedTextBrush}"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding SelectedUiScaleCode}" Value="standard">
+                                                            <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                                                            <Setter Property="FontWeight" Value="Bold"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <TextBlock Canvas.Left="175" Width="130" Text="{Binding Loc[UiScaleLarge]}" TextAlignment="Center">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="FontSize" Value="{DynamicResource UIScaleLargeLabelFontSize}"/>
+                                                    <Setter Property="Foreground" Value="{DynamicResource MutedTextBrush}"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding SelectedUiScaleCode}" Value="large">
+                                                            <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                                                            <Setter Property="FontWeight" Value="Bold"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <TextBlock Canvas.Left="295" Width="130" Text="{Binding Loc[UiScaleMaximum]}" TextAlignment="Center">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="FontSize" Value="{DynamicResource UIScaleMaximumLabelFontSize}"/>
+                                                    <Setter Property="Foreground" Value="{DynamicResource MutedTextBrush}"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding SelectedUiScaleCode}" Value="maximum">
+                                                            <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                                                            <Setter Property="FontWeight" Value="Bold"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </Canvas>
+                                </StackPanel>
                                 <CheckBox Content="{Binding Loc[StartWithWindows]}" IsChecked="{Binding AutoStart}"/>
                                 <CheckBox Content="{Binding Loc[AutoCheckUpdates]}" IsChecked="{Binding AutoCheckUpdates}"/>
                                 <CheckBox Content="{Binding Loc[NumericIcon]}" IsChecked="{Binding NumericDisplay}"/>
@@ -532,18 +734,24 @@
                     <StackPanel Margin="0,0,22,0">
                         <Border Style="{StaticResource PanelBorder}">
                             <StackPanel>
-                                <TextBlock Text="{Binding Loc[GlobalDefaults]}" FontSize="16" FontWeight="SemiBold"/>
+                                <TextBlock Text="{Binding Loc[GlobalDefaults]}" FontSize="{DynamicResource UISectionTitleFontSize}" FontWeight="SemiBold"/>
                                 <TextBlock Text="{Binding Loc[DefaultThreshold]}" Margin="0,12,0,2"/>
-                                <Grid Width="312" HorizontalAlignment="Left">
+                                <Grid Width="{DynamicResource UIThresholdControlWidth}" HorizontalAlignment="Left">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="68"/>
+                                        <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
                                     <Slider Grid.Column="0"
+                                            Loaded="OnThresholdSliderLoaded"
+                                            Unloaded="OnThresholdSliderUnloaded"
                                             Minimum="1"
                                             Maximum="100"
                                             TickFrequency="1"
                                             IsMoveToPointEnabled="True"
+                                            PreviewMouseLeftButtonUp="OnThresholdMouseLeftButtonUp"
+                                            TouchUp="OnThresholdTouchUp"
+                                            KeyUp="OnThresholdKeyUp"
+                                            LostFocus="OnThresholdLostFocus"
                                             Value="{Binding DefaultThresholdPercent, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
                                     <Border Grid.Column="1" Style="{StaticResource PercentBadge}" Margin="10,0,0,0">
                                         <TextBlock Text="{Binding DefaultThresholdPercentText}" Foreground="{DynamicResource TextBrush}" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
@@ -557,7 +765,7 @@
 
                         <Border Style="{StaticResource PanelBorder}">
                             <StackPanel>
-                                <TextBlock Text="{Binding Loc[QuietHours]}" FontSize="16" FontWeight="SemiBold"/>
+                                <TextBlock Text="{Binding Loc[QuietHours]}" FontSize="{DynamicResource UISectionTitleFontSize}" FontWeight="SemiBold"/>
                                 <CheckBox Content="{Binding Loc[QuietHoursEnabled]}" IsChecked="{Binding QuietHoursEnabled}"/>
                                 <StackPanel Orientation="Horizontal">
                                     <StackPanel Width="120">
@@ -592,20 +800,29 @@
                         <ItemsControl ItemsSource="{Binding DeviceItems}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <Border Style="{StaticResource PanelBorder}">
+                                    <Border Style="{StaticResource DevicePanelBorder}">
                                             <StackPanel>
-                                                <StackPanel Orientation="Horizontal">
-                                                    <TextBlock Text="{Binding DisplayName}" FontSize="16" FontWeight="SemiBold" Foreground="{DynamicResource TextBrush}"/>
-                                                    <Border Style="{StaticResource MetaPill}" Padding="8,3" Margin="10,0,0,0" Visibility="{Binding IsOffline, Converter={StaticResource BoolToVisibilityConverter}}">
-                                                        <TextBlock Text="{Binding Loc[Offline]}" Foreground="{DynamicResource MutedTextBrush}" FontSize="12" FontWeight="SemiBold"/>
+                                                <Grid HorizontalAlignment="Left" VerticalAlignment="Center" MinHeight="{DynamicResource UIButtonMinHeight}">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <Border Grid.Column="0" Height="{DynamicResource UIButtonMinHeight}" VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding DisplayName}" MaxWidth="{DynamicResource UIDeviceTitleMaxWidth}" FontSize="{DynamicResource UISectionTitleFontSize}" LineHeight="{DynamicResource UIDeviceTitleLineHeight}" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold" Foreground="{DynamicResource TextBrush}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
                                                     </Border>
-                                                    <Button Content="{Binding Loc[RemoveHistory]}"
+                                                    <Border Grid.Column="1" Style="{StaticResource MetaPill}" Padding="8,3" Margin="6,0,0,0" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="{Binding IsOffline, Converter={StaticResource BoolToVisibilityConverter}}">
+                                                        <TextBlock Text="{Binding Loc[Offline]}" Foreground="{DynamicResource MutedTextBrush}" FontSize="{DynamicResource UICaptionFontSize}" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center"/>
+                                                    </Border>
+                                                    <Button Grid.Column="2"
+                                                            Content="{Binding Loc[RemoveHistory]}"
                                                             Command="{Binding RemoveHistoryCommand}"
                                                             Visibility="{Binding IsOffline, Converter={StaticResource BoolToVisibilityConverter}}"
-                                                            Margin="2,-2,0,0"
-                                                            Padding="10,4"
-                                                            MinHeight="0"/>
-                                                </StackPanel>
+                                                            Height="{DynamicResource UIButtonMinHeight}"
+                                                            Margin="18,0,0,0"
+                                                            Padding="10,0"
+                                                            VerticalAlignment="Center"/>
+                                                </Grid>
                                             <TextBlock Visibility="{Binding ShowOriginalName, Converter={StaticResource BoolToVisibilityConverter}}"
                                                        Foreground="{DynamicResource MutedTextBrush}"
                                                        Margin="0,2,0,0">
@@ -613,45 +830,54 @@
                                                 <Run Text=": "/>
                                                 <Run Text="{Binding OriginalName, Mode=OneWay}"/>
                                             </TextBlock>
-                                            <Grid Margin="0,14,0,0">
+                                            <Grid Margin="0,14,0,0" HorizontalAlignment="Left">
                                                 <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="230"/>
-                                                    <ColumnDefinition Width="24"/>
-                                                    <ColumnDefinition Width="312"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="{DynamicResource UIDeviceThresholdColumnGap}"/>
+                                                    <ColumnDefinition Width="Auto"/>
                                                 </Grid.ColumnDefinitions>
                                                 <Grid.RowDefinitions>
                                                     <RowDefinition Height="Auto"/>
                                                     <RowDefinition Height="Auto"/>
                                                 </Grid.RowDefinitions>
 
-                                                <StackPanel Grid.Column="0">
+                                                <StackPanel Grid.Column="0" Width="{DynamicResource UIDeviceFieldWidth}">
                                                     <TextBlock Text="{Binding Loc[Alias]}" Foreground="{DynamicResource TextBrush}" FontWeight="SemiBold"/>
-                                                    <TextBlock Text="{Binding Loc[AliasHint]}" Foreground="{DynamicResource MutedTextBrush}" FontSize="12" Margin="0,2,0,6" TextWrapping="Wrap"/>
+                                                    <TextBlock Text="{Binding Loc[AliasHint]}" Foreground="{DynamicResource MutedTextBrush}" FontSize="{DynamicResource UICaptionFontSize}" Margin="0,2,0,6" TextWrapping="Wrap"/>
                                                 </StackPanel>
                                                 <TextBox Grid.Row="1"
                                                          Grid.Column="0"
-                                                         Height="34"
-                                                         MinHeight="34"
-                                                         Padding="8,5"
+                                                         Style="{StaticResource AliasTextBox}"
+                                                         Width="{DynamicResource UIDeviceFieldWidth}"
+                                                         Height="{DynamicResource UIInputMinHeight}"
+                                                         MinHeight="{DynamicResource UIInputMinHeight}"
                                                          VerticalAlignment="Top"
+                                                         PreviewTextInput="OnAliasPreviewTextInput"
+                                                         DataObject.Pasting="OnAliasPasting"
                                                          Text="{Binding Alias, UpdateSourceTrigger=PropertyChanged}"/>
 
                                                 <TextBlock Grid.Column="2" Text="{Binding Loc[LowBatteryThreshold]}" Foreground="{DynamicResource TextBrush}" FontWeight="SemiBold"/>
-                                                <StackPanel Grid.Row="1" Grid.Column="2">
+                                                <StackPanel Grid.Row="1" Grid.Column="2" Width="{DynamicResource UIDeviceThresholdControlWidth}" Margin="0,-4,0,0">
                                                     <CheckBox Content="{Binding Loc[FollowGlobalThreshold]}"
                                                               IsChecked="{Binding FollowGlobalThreshold}"
-                                                              Margin="0,0,0,4"/>
+                                                              Margin="0,-2,0,0"/>
                                                     <Grid>
                                                         <Grid.ColumnDefinitions>
                                                             <ColumnDefinition Width="*"/>
-                                                            <ColumnDefinition Width="68"/>
+                                                            <ColumnDefinition Width="Auto"/>
                                                         </Grid.ColumnDefinitions>
                                                         <Slider Grid.Column="0"
+                                                                Loaded="OnThresholdSliderLoaded"
+                                                                Unloaded="OnThresholdSliderUnloaded"
                                                                 Minimum="1"
                                                                 Maximum="100"
                                                                 TickFrequency="1"
                                                                 IsMoveToPointEnabled="True"
                                                                 IsEnabled="{Binding IsCustomThreshold}"
+                                                                PreviewMouseLeftButtonUp="OnThresholdMouseLeftButtonUp"
+                                                                TouchUp="OnThresholdTouchUp"
+                                                                KeyUp="OnThresholdKeyUp"
+                                                                LostFocus="OnThresholdLostFocus"
                                                                 Value="{Binding ThresholdPercent, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
                                                         <Border Grid.Column="1" Style="{StaticResource PercentBadge}" Margin="10,0,0,0">
                                                             <TextBlock Text="{Binding ThresholdPercentText}" Foreground="{DynamicResource TextBrush}" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
@@ -675,18 +901,26 @@
                                             </WrapPanel>
                                             <Grid Margin="0,8,0,0" HorizontalAlignment="Left">
                                                 <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="220"/>
-                                                    <ColumnDefinition Width="8"/>
-                                                    <ColumnDefinition Width="300"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="{DynamicResource UIDeviceOptionColumnGap}"/>
+                                                    <ColumnDefinition Width="Auto"/>
                                                 </Grid.ColumnDefinitions>
                                                 <Grid.RowDefinitions>
                                                     <RowDefinition Height="Auto"/>
                                                     <RowDefinition Height="Auto"/>
                                                 </Grid.RowDefinitions>
-                                                <CheckBox Grid.Row="0" Grid.Column="0" Content="{Binding Loc[FollowGlobalNumericIcon]}" IsChecked="{Binding FollowGlobalNumericDisplay}"/>
-                                                <CheckBox Grid.Row="0" Grid.Column="2" Content="{Binding Loc[WindowsNotification]}" IsChecked="{Binding WindowsNotification}"/>
-                                                <CheckBox Grid.Row="1" Grid.Column="0" Content="{Binding Loc[NumericIcon]}" IsChecked="{Binding NumericDisplay}" IsEnabled="{Binding IsCustomNumericDisplay}"/>
-                                                <CheckBox Grid.Row="1" Grid.Column="2" Content="{Binding Loc[TrayBlink]}" IsChecked="{Binding TrayBlink}"/>
+                                                <CheckBox Grid.Row="0" Grid.Column="0" IsChecked="{Binding FollowGlobalNumericDisplay}" Width="{DynamicResource UIDeviceOptionColumnWidth}" VerticalAlignment="Top">
+                                                    <TextBlock Text="{Binding Loc[FollowGlobalNumericIcon]}" TextWrapping="Wrap"/>
+                                                </CheckBox>
+                                                <CheckBox Grid.Row="0" Grid.Column="2" IsChecked="{Binding WindowsNotification}" Width="{DynamicResource UIDeviceOptionColumnWidth}" VerticalAlignment="Top">
+                                                    <TextBlock Text="{Binding Loc[WindowsNotification]}" TextWrapping="Wrap"/>
+                                                </CheckBox>
+                                                <CheckBox Grid.Row="1" Grid.Column="0" IsChecked="{Binding NumericDisplay}" IsEnabled="{Binding IsCustomNumericDisplay}" Width="{DynamicResource UIDeviceOptionColumnWidth}" VerticalAlignment="Top">
+                                                    <TextBlock Text="{Binding Loc[NumericIcon]}" TextWrapping="Wrap"/>
+                                                </CheckBox>
+                                                <CheckBox Grid.Row="1" Grid.Column="2" IsChecked="{Binding TrayBlink}" Width="{DynamicResource UIDeviceOptionColumnWidth}" VerticalAlignment="Top">
+                                                    <TextBlock Text="{Binding Loc[TrayBlink]}" TextWrapping="Wrap"/>
+                                                </CheckBox>
                                             </Grid>
                                             <WrapPanel>
                                                 <Button Content="{Binding Loc[PauseOneHour]}" Command="{Binding PauseOneHourCommand}"/>
@@ -720,7 +954,7 @@
 
                     <Border Grid.Row="0" Style="{StaticResource PanelBorder}">
                         <StackPanel>
-                            <TextBlock Text="{Binding Loc[Diagnostics]}" FontSize="16" FontWeight="SemiBold"/>
+                            <TextBlock Text="{Binding Loc[Diagnostics]}" FontSize="{DynamicResource UISectionTitleFontSize}" FontWeight="SemiBold"/>
                             <TextBlock Text="{Binding Loc[ReleaseVersion], StringFormat={}{0}:}" Margin="0,8,0,0"/>
                             <TextBlock Text="{Binding CurrentVersion}" FontWeight="SemiBold"/>
                             <TextBlock Text="{Binding Loc[GHubStatus], StringFormat={}{0}:}"/>
@@ -745,10 +979,35 @@
                                  VerticalScrollBarVisibility="Auto"
                                  HorizontalScrollBarVisibility="Auto"
                                  Margin="0"
-                                 Padding="14,12,0,12"
+                                 Padding="{DynamicResource UIDiagnosticsTextPadding}"
                                  BorderThickness="0"
                                  Background="Transparent"
-                                 FontFamily="Consolas">
+                                 FontFamily="Consolas"
+                                 FontSize="{DynamicResource UIMonospaceFontSize}">
+                            <TextBox.ContextMenu>
+                                <ContextMenu Style="{StaticResource ModernTextContextMenu}">
+                                    <ContextMenu.Resources>
+                                        <Style TargetType="Separator" BasedOn="{StaticResource ModernTextSeparator}"/>
+                                    </ContextMenu.Resources>
+                                    <MenuItem Header="{Binding PlacementTarget.DataContext.Loc[ContextCut], RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                              InputGestureText="Ctrl+X"
+                                              Command="{x:Static ApplicationCommands.Cut}"
+                                              CommandTarget="{Binding PlacementTarget, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                    <MenuItem Header="{Binding PlacementTarget.DataContext.Loc[ContextCopy], RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                              InputGestureText="Ctrl+C"
+                                              Command="{x:Static ApplicationCommands.Copy}"
+                                              CommandTarget="{Binding PlacementTarget, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                    <MenuItem Header="{Binding PlacementTarget.DataContext.Loc[ContextPaste], RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                              InputGestureText="Ctrl+V"
+                                              Command="{x:Static ApplicationCommands.Paste}"
+                                              CommandTarget="{Binding PlacementTarget, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                    <Separator/>
+                                    <MenuItem Header="{Binding PlacementTarget.DataContext.Loc[ContextSelectAll], RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                              InputGestureText="Ctrl+A"
+                                              Command="{x:Static ApplicationCommands.SelectAll}"
+                                              CommandTarget="{Binding PlacementTarget, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                </ContextMenu>
+                            </TextBox.ContextMenu>
                             <TextBox.Resources>
                                 <Style TargetType="ScrollBar" BasedOn="{StaticResource DiagnosticsScrollBarStyle}"/>
                             </TextBox.Resources>

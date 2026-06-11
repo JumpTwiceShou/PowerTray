@@ -7,8 +7,8 @@
     <Style x:Key="TrayMenuItemStyle" TargetType="MenuItem">
         <Setter Property="Background" Value="Transparent"/>
         <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
-        <Setter Property="FontFamily" Value="Segoe UI, Microsoft YaHei UI"/>
-        <Setter Property="FontSize" Value="12.5"/>
+        <Setter Property="FontFamily" Value="{DynamicResource UIFontFamily}"/>
+        <Setter Property="FontSize" Value="{DynamicResource UIMenuFontSize}"/>
         <Setter Property="MinHeight" Value="26"/>
         <Setter Property="MinWidth" Value="148"/>
         <Setter Property="MaxWidth" Value="250"/>
@@ -122,7 +122,8 @@
             <Style TargetType="Separator" BasedOn="{StaticResource TraySeparatorStyle}"/>
             <Style TargetType="TextBlock">
                 <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
-                <Setter Property="FontFamily" Value="Segoe UI, Microsoft YaHei UI"/>
+                <Setter Property="FontFamily" Value="{DynamicResource UIFontFamily}"/>
+                <Setter Property="FontSize" Value="{DynamicResource UIMenuFontSize}"/>
             </Style>
         </ContextMenu.Resources>
 
@@ -169,7 +170,7 @@
                         <ColumnDefinition Width="13"/>
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
-                    <TextBlock Text="&#x2713;" FontWeight="Bold" Foreground="{DynamicResource AccentBrush}" Visibility="{Binding NumericDisplay, Converter={StaticResource BoolToVisibilityConverter}}"/>
+                    <TextBlock Text="&#x2713;" FontWeight="Bold" Foreground="{DynamicResource AccentBrush}" Visibility="{Binding MenuNumericDisplay, Converter={StaticResource BoolToVisibilityConverter}}"/>
                     <TextBlock Grid.Column="1" Text="{Binding Loc[MenuNumericIcon]}"/>
                 </Grid>
             </MenuItem.Header>

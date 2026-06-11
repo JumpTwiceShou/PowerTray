@@ -29,6 +29,7 @@ internal static class TrayContextMenuPlacement
         }
 
         e.Handled = true;
+        SetMenuDeviceContext(taskbarIcon, menu);
 
         if (!taskbarIcon.Dispatcher.CheckAccess())
         {
@@ -37,6 +38,14 @@ internal static class TrayContextMenuPlacement
         }
 
         OpenAtCursor(menu);
+    }
+
+    private static void SetMenuDeviceContext(TaskbarIcon taskbarIcon, ContextMenu menu)
+    {
+        if (menu.DataContext is NotifyIconViewModel viewModel)
+        {
+            viewModel.SetMenuDeviceContext(taskbarIcon.DataContext as LogiDeviceViewModel);
+        }
     }
 
     private static void OpenAtCursor(ContextMenu menu)

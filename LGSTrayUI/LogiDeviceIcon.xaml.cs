@@ -117,6 +117,7 @@ namespace LGSTrayUI
             AddActiveIcon(this);
 
             DataContext = device;
+            taskbarIcon.DataContext = device;
             _alertState = alertState;
             _alertState.Changed += OnAlertStateChanged;
 

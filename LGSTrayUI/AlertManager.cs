@@ -75,7 +75,7 @@ public sealed class AlertManager
         bool paused = _settings.IsDevicePaused(device.DeviceId, now);
         bool lowBattery = device.HasBattery &&
                           device.BatteryPercentage >= 0 &&
-                          device.BatteryPercentage < _settings.GetThreshold(device.DeviceId) &&
+                          device.BatteryPercentage <= _settings.GetThreshold(device.DeviceId) &&
                           device.PowerSupplyStatus != PowerSupplyStatus.POWER_SUPPLY_STATUS_CHARGING &&
                           device.PowerSupplyStatus != PowerSupplyStatus.POWER_SUPPLY_STATUS_FULL;
 

@@ -10,9 +10,8 @@ namespace LGSTrayPrimitives.IPC
             services.AddMessagePipe(options =>
             {
                 options.EnableCaptureStackTrace = true;
-            });
-
-            services.AddMessagePipeNamedPipeInterprocess("PowerTray", config =>
+            })
+            .AddNamedPipeInterprocess(IpcNameScope.MessagePipeName("PowerTray"), config =>
             {
                 config.HostAsServer = hostAsServer;
             });

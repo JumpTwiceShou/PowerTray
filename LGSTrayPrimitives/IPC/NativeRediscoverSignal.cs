@@ -5,7 +5,7 @@ namespace LGSTrayPrimitives.IPC;
 
 public static class NativeRediscoverSignal
 {
-    private const string EventName = @"Local\PowerTray.NativeBattery.Rediscover";
+    private static readonly string EventName = IpcNameScope.LocalEventName("PowerTray.NativeBattery.Rediscover");
 
     public static EventWaitHandle CreateListener()
     {

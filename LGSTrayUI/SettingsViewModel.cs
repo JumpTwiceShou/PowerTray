@@ -2,6 +2,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using LGSTrayCore;
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
@@ -10,6 +11,7 @@ using System.IO.Compression;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -32,11 +34,28 @@ public sealed partial class SettingsViewModel : ObservableObject
     private readonly UpdateService _updateService;
     private readonly NativeDiagnosticsClient _nativeDiagnosticsClient;
     private readonly AppSettings _appSettings;
+    private double _uiScaleValue;
+    private int _defaultThresholdDraft;
+    private bool _isEditingDefaultThreshold;
     private bool _lastGHubRunning;
     private bool _lastPort9010Reachable;
 
     public LocalizationService Loc { get; }
     public ObservableCollection<DeviceSettingsItemViewModel> DeviceItems { get; } = [];
+    public IReadOnlyList<LanguageOption> LanguageOptions { get; } =
+    [
+        new("en-US", "English"),
+        new("zh-CN", "简体中文"),
+        new("ja-JP", "日本語"),
+    ];
+
+    public IReadOnlyList<UiScaleOption> UiScaleOptions { get; } =
+    [
+        new(0, "small", 0.94, "UiScaleSmall"),
+        new(1, "standard", 1.00, "UiScaleStandard"),
+        new(2, "large", 1.12, "UiScaleLarge"),
+        new(3, "maximum", 1.25, "UiScaleMaximum"),
+    ];
 
     [ObservableProperty]
     private string _gHubStatus = string.Empty;
@@ -70,6 +89,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         _nativeDiagnosticsClient = nativeDiagnosticsClient;
         _appSettings = appSettings.Value;
         Loc = loc;
+        _uiScaleValue = CurrentUiScaleOption.Index;
+        _defaultThresholdDraft = _settings.DefaultThresholdPercent;
 
         _deviceCollection.Devices.CollectionChanged += OnDevicesChanged;
         _settings.DeviceSettingsChanged += OnDeviceSettingsChanged;
@@ -97,6 +118,50 @@ public sealed partial class SettingsViewModel : ObservableObject
             _settings.ThemeMode = value;
             RefreshBindings();
         }
+    }
+
+    public double UiScaleValue
+    {
+        get => _uiScaleValue;
+        set
+        {
+            double normalized = Math.Clamp(value, UiScaleOptions[0].Index, UiScaleOptions[^1].Index);
+            if (Math.Abs(_uiScaleValue - normalized) < 0.0001)
+            {
+                return;
+            }
+
+            _uiScaleValue = normalized;
+            OnPropertyChanged();
+        }
+    }
+
+    public string SelectedUiScaleCode => CurrentUiScaleOption.Code;
+
+    public double WindowWidth => GetWindowSize().Width;
+    public double WindowHeight => GetWindowSize().Height;
+    public double WindowMinWidth => GetWindowMinimumWidth();
+    public double WindowMinHeight => Math.Min(WindowHeight, 620);
+
+    public void CommitUiScaleValue()
+    {
+        UiScaleOption option = UiScaleOptions
+            .OrderBy(x => Math.Abs(x.Index - _uiScaleValue))
+            .First();
+
+        if (Math.Abs(_uiScaleValue - option.Index) >= 0.0001)
+        {
+            _uiScaleValue = option.Index;
+            OnPropertyChanged(nameof(UiScaleValue));
+        }
+
+        if (_settings.UiScaleMode == option.Code)
+        {
+            return;
+        }
+
+        _settings.UiScaleMode = option.Code;
+        RefreshBindings();
     }
 
     public bool AutoStart
@@ -131,20 +196,38 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     public int DefaultThresholdPercent
     {
-        get => _settings.DefaultThresholdPercent;
+        get => _defaultThresholdDraft;
         set
         {
-            if (_settings.DefaultThresholdPercent == value)
+            int threshold = Math.Clamp(value, 1, 100);
+            if (_defaultThresholdDraft == threshold)
             {
                 return;
             }
 
-            _settings.DefaultThresholdPercent = value;
-            RefreshBindings();
+            _defaultThresholdDraft = threshold;
+            _isEditingDefaultThreshold = true;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(DefaultThresholdPercentText));
         }
     }
 
     public string DefaultThresholdPercentText => $"{DefaultThresholdPercent}%";
+
+    public void CommitDefaultThresholdPercent()
+    {
+        int threshold = Math.Clamp(_defaultThresholdDraft, 1, 100);
+        _isEditingDefaultThreshold = false;
+        if (_settings.DefaultThresholdPercent == threshold)
+        {
+            _defaultThresholdDraft = threshold;
+            OnPropertyChanged(nameof(DefaultThresholdPercent));
+            OnPropertyChanged(nameof(DefaultThresholdPercentText));
+            return;
+        }
+
+        _settings.DefaultThresholdPercent = threshold;
+    }
 
     public bool DefaultWindowsNotification
     {
@@ -317,6 +400,11 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     private void RefreshDeviceItems()
     {
+        foreach (DeviceSettingsItemViewModel item in DeviceItems)
+        {
+            item.Dispose();
+        }
+
         DeviceItems.Clear();
         foreach (LogiDeviceViewModel device in _deviceCollection.Devices.Where(x => x.DeviceName != LogiDevice.NOT_FOUND))
         {
@@ -334,6 +422,12 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     private void RefreshBindings()
     {
+        _uiScaleValue = CurrentUiScaleOption.Index;
+        if (!_isEditingDefaultThreshold)
+        {
+            _defaultThresholdDraft = _settings.DefaultThresholdPercent;
+        }
+
         RefreshStatusText();
         OnPropertyChanged(string.Empty);
         foreach (DeviceSettingsItemViewModel item in DeviceItems)
@@ -341,6 +435,50 @@ public sealed partial class SettingsViewModel : ObservableObject
             item.Refresh();
         }
         DiagnosticSummary = BuildDiagnostics();
+    }
+
+    private UiScaleOption CurrentUiScaleOption =>
+        UiScaleOptions.FirstOrDefault(x => x.Code.Equals(_settings.UiScaleMode, StringComparison.OrdinalIgnoreCase))
+        ?? UiScaleOptions[1];
+
+    private (double Width, double Height) GetWindowSize()
+    {
+        (double width, double height) = CurrentUiScaleOption.Code switch
+        {
+            "small" => (880.0, 670.0),
+            "large" => (990.0, 785.0),
+            "maximum" => (1100.0, 875.0),
+            _ => (880.0, 700.0),
+        };
+
+        Rect workArea = SystemParameters.WorkArea;
+        return (
+            CapToWorkArea(width, workArea.Width),
+            CapToWorkArea(height, workArea.Height)
+        );
+    }
+
+    private static double CapToWorkArea(double desired, double available)
+    {
+        if (available <= 0)
+        {
+            return desired;
+        }
+
+        double cap = Math.Max(360.0, available - 32.0);
+        return Math.Round(Math.Min(desired, cap));
+    }
+
+    private double GetWindowMinimumWidth()
+    {
+        double desired = CurrentUiScaleOption.Code switch
+        {
+            "large" => 990.0,
+            "maximum" => 1100.0,
+            _ => 880.0,
+        };
+
+        return CapToWorkArea(desired, SystemParameters.WorkArea.Width);
     }
 
     private void RefreshStatusText()
@@ -361,12 +499,12 @@ public sealed partial class SettingsViewModel : ObservableObject
         sb.AppendLine($"{Loc["Port9010Status"]}: {Port9010Status}");
         sb.AppendLine();
         sb.AppendLine(Loc["AlertSummary"]);
-        sb.AppendLine(_settings.ExportSettingsSummary());
+        sb.AppendLine(BuildSettingsDiagnosticsSummary().ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
         sb.AppendLine();
         sb.AppendLine($"{Loc["DiagnosticsDevices"]}:");
         foreach (LogiDeviceViewModel device in _deviceCollection.Devices)
         {
-            sb.AppendLine($"{device.DeviceId} | {device.DeviceName} | {device.DeviceType} | {device.BatteryPercentage:0.00}% | {device.PowerSupplyStatus} | {device.LastUpdate:o}");
+            sb.AppendLine($"{HashForDiagnostics(device.DeviceId)} | {device.DeviceName} | {device.DeviceType} | {device.BatteryPercentage:0.00}% | {device.PowerSupplyStatus} | {device.LastUpdate:o}");
         }
         return sb.ToString();
     }
@@ -438,8 +576,43 @@ public sealed partial class SettingsViewModel : ObservableObject
             ["theme"] = ThemeMode,
             ["numericDisplay"] = NumericDisplay,
             ["autoCheckUpdates"] = AutoCheckUpdates,
-            ["alertSummary"] = _settings.ExportSettingsSummary(),
+            ["alertSummary"] = BuildSettingsDiagnosticsSummary(),
         };
+    }
+
+    private JsonObject BuildSettingsDiagnosticsSummary()
+    {
+        JsonObject root = new()
+        {
+            ["uiScaleMode"] = _settings.UiScaleMode,
+            ["globalThresholdPercent"] = _settings.DefaultThresholdPercent,
+            ["globalWindowsNotification"] = _settings.DefaultWindowsNotification,
+            ["globalTrayBlink"] = _settings.DefaultTrayBlink,
+            ["quietHoursEnabled"] = _settings.QuietHoursEnabled,
+            ["suppressNotificationsWhenFullscreen"] = _settings.SuppressNotificationsWhenFullscreen,
+            ["selectedDeviceCount"] = _settings.SelectedDevices.Count(),
+            ["deviceSettingsCount"] = _settings.Snapshot.Devices.Count,
+        };
+
+        JsonArray deviceSettings = [];
+        foreach (KeyValuePair<string, DeviceAlertSettings> pair in _settings.Snapshot.Devices.OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            DeviceAlertSettings settings = pair.Value;
+            deviceSettings.Add(new JsonObject
+            {
+                ["deviceIdHash"] = HashForDiagnostics(pair.Key),
+                ["hasAlias"] = !string.IsNullOrWhiteSpace(settings.Alias),
+                ["hasCustomThreshold"] = settings.ThresholdPercent.HasValue,
+                ["hasCustomWindowsNotification"] = settings.WindowsNotification.HasValue,
+                ["hasCustomTrayBlink"] = settings.TrayBlink.HasValue,
+                ["hasCustomNumericDisplay"] = settings.NumericDisplay.HasValue,
+                ["isPaused"] = settings.PauseUntil.HasValue,
+                ["lastDeviceType"] = settings.LastDeviceType?.ToString(),
+            });
+        }
+
+        root["deviceSettings"] = deviceSettings;
+        return root;
     }
 
     private JsonArray BuildRecognizedDevicesJson()
@@ -449,9 +622,9 @@ public sealed partial class SettingsViewModel : ObservableObject
         {
             devices.Add(new JsonObject
             {
-                ["deviceId"] = device.DeviceId,
+                ["deviceIdHash"] = HashForDiagnostics(device.DeviceId),
                 ["deviceName"] = device.DeviceName,
-                ["displayName"] = device.BaseDisplayName,
+                ["hasAlias"] = device.HasAlias,
                 ["deviceType"] = device.DeviceType.ToString(),
                 ["hasBattery"] = device.HasBattery,
                 ["isOnline"] = device.IsOnline,
@@ -487,7 +660,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         sb.AppendLine($"{Loc["RecognizedDevices"]}:");
         foreach (LogiDeviceViewModel device in _deviceCollection.Devices)
         {
-            sb.AppendLine($"- {device.DeviceId} | {device.DeviceName} | {device.DeviceType} | {device.BatteryPercentage:0.00}% | {device.PowerSupplyStatus}");
+            sb.AppendLine($"- {HashForDiagnostics(device.DeviceId)} | {device.DeviceName} | {device.DeviceType} | {device.BatteryPercentage:0.00}% | {device.PowerSupplyStatus}");
         }
 
         return sb.ToString();
@@ -501,8 +674,8 @@ public sealed partial class SettingsViewModel : ObservableObject
 PowerTray 诊断包
 
 报告不支持的 Logitech 设备时，请附上 diagnostics.json。
-此诊断包会对 HID 路径和序列号做哈希处理。产品名称、产品 ID、
-usage page、接口编号、HID++ feature map 和电量探测结果会被保留，
+此诊断包会对 HID 路径、设备标识、序列号和原始 HID++ identity 响应做哈希处理，
+并且不会导出自定义别名明文。产品名称、产品 ID、usage page、接口编号、HID++ feature map 和电量探测结果会被保留，
 因为这些信息用于判断和新增设备支持。
 
 重要字段：
@@ -510,11 +683,32 @@ usage page、接口编号、HID++ feature map 和电量探测结果会被保留�
 - unsupportedHidDevices：未探测、无法打开或非 Logitech 的 HID 背景端点。
 - nativeDiscovery：PowerTrayHID 在发现设备时尝试过的路径。
 - nativeDiscovery[].failureReasons：设备或 session 被跳过的原因。
-- nativeDiscovery[].devices[].identity：0x0003 identity 原始响应、unit id、
-  model id、serial response 和最终 identifier 来源。
+- nativeDiscovery[].devices[].identity：0x0003 identity 的 unit id、model id、serial 和原始响应哈希，以及最终 identifier 来源。
 - nativeDiscovery[].devices[].featureMap：已识别设备暴露的 HID++ features。
 - nativeDiscovery[].centurion：Centurion report id、device address、bridge 和电量数据。
 - recognizedDevices：当前 UI 中显示的设备。
+""";
+        }
+
+        if (Loc.CurrentLanguage.Equals("ja-JP", StringComparison.OrdinalIgnoreCase))
+        {
+            return """
+PowerTray 診断パッケージ
+
+未対応の Logitech デバイスを報告するときは diagnostics.json を添付してください。
+このパッケージでは HID パス、デバイス識別子、シリアル番号、元の HID++ identity 応答をハッシュ化し、
+カスタム表示名の平文は出力しません。製品名、製品 ID、usage page、インターフェイス番号、HID++ feature map、バッテリー検出結果は、
+デバイス対応の判断に必要なため保持します。
+
+主なフィールド:
+- hidEnumeration: Windows から見えている Logitech HID エンドポイント。
+- unsupportedHidDevices: 未調査、開けなかった、または Logitech 以外の HID エンドポイント。
+- nativeDiscovery: PowerTrayHID が検出時に試した経路。
+- nativeDiscovery[].failureReasons: デバイスまたは session がスキップされた理由。
+- nativeDiscovery[].devices[].identity: 0x0003 identity の unit id、model id、serial、元応答のハッシュと最終 identifier の由来。
+- nativeDiscovery[].devices[].featureMap: 認識済みデバイスが公開している HID++ features。
+- nativeDiscovery[].centurion: Centurion report id、device address、bridge、バッテリー情報。
+- recognizedDevices: 現在 UI に表示されているデバイス。
 """;
         }
 
@@ -522,9 +716,10 @@ usage page、接口编号、HID++ feature map 和电量探测结果会被保留�
 PowerTray diagnostics package
 
 Please share diagnostics.json when reporting an unsupported Logitech device.
-The package intentionally hashes HID paths and serial numbers. Product names,
-product ids, usage pages, interface numbers, HID++ feature maps, and battery
-probe results are kept because they are needed to add device support.
+The package intentionally hashes HID paths, device identifiers, serial numbers,
+and raw HID++ identity responses. Custom aliases are not exported in plain text.
+Product names, product ids, usage pages, interface numbers, HID++ feature maps,
+and battery probe results are kept because they are needed to add device support.
 
 Important fields:
 - hidEnumeration: all Logitech HID endpoints visible to Windows.
@@ -532,8 +727,8 @@ Important fields:
   endpoints that were not probed or could not be opened.
 - nativeDiscovery: what PowerTrayHID tried during discovery.
 - nativeDiscovery[].failureReasons: why a device/session was skipped.
-- nativeDiscovery[].devices[].identity: raw 0x0003 identity responses, unit id,
-  model id, serial response, and the final identifier source.
+- nativeDiscovery[].devices[].identity: unit id, model id, serial, and raw
+  0x0003 identity response hashes plus the final identifier source.
 - nativeDiscovery[].devices[].featureMap: HID++ features exposed by a recognized device.
 - nativeDiscovery[].centurion: Centurion report id, device address, bridge, and battery data.
 - recognizedDevices: devices currently shown by the UI.
@@ -553,6 +748,17 @@ Important fields:
         writer.Write(content);
     }
 
+    private static string HashForDiagnostics(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(value));
+        return Convert.ToHexString(hash[..8]).ToLowerInvariant();
+    }
+
     private static string GetCurrentVersion()
     {
         string? version = Assembly.GetEntryAssembly()
@@ -564,13 +770,22 @@ Important fields:
     }
 }
 
-public sealed partial class DeviceSettingsItemViewModel : ObservableObject
+public sealed record LanguageOption(string Code, string NativeName)
+{
+    public override string ToString() => NativeName;
+}
+
+public sealed record UiScaleOption(int Index, string Code, double Scale, string LabelKey);
+
+public sealed partial class DeviceSettingsItemViewModel : ObservableObject, IDisposable
 {
     private readonly LogiDeviceViewModel _device;
     private readonly UserSettingsWrapper _settings;
     private readonly NotificationService _notifications;
     private readonly AlertManager _alertManager;
     private readonly Action<DeviceSettingsItemViewModel> _removeHistory;
+    private readonly PropertyChangedEventHandler _devicePropertyChangedHandler;
+    private int _thresholdDraft;
     private bool _isEditingThreshold;
 
     public LocalizationService Loc { get; }
@@ -666,7 +881,14 @@ public sealed partial class DeviceSettingsItemViewModel : ObservableObject
         _notifications = notifications;
         _alertManager = alertManager;
         _removeHistory = removeHistory;
-        _device.PropertyChanged += (_, _) => Refresh();
+        _thresholdDraft = _settings.GetThreshold(DeviceId);
+        _devicePropertyChangedHandler = (_, _) => Refresh();
+        _device.PropertyChanged += _devicePropertyChangedHandler;
+    }
+
+    public void Dispose()
+    {
+        _device.PropertyChanged -= _devicePropertyChangedHandler;
     }
 
     public string Alias
@@ -681,29 +903,54 @@ public sealed partial class DeviceSettingsItemViewModel : ObservableObject
 
     public int ThresholdPercent
     {
-        get => _settings.GetThreshold(DeviceId);
+        get => _thresholdDraft;
         set
         {
             int threshold = Math.Clamp(value, 1, 100);
-            if (ThresholdPercent == threshold)
+            if (_thresholdDraft == threshold)
             {
                 return;
             }
 
+            _thresholdDraft = threshold;
             _isEditingThreshold = true;
-            try
-            {
-                _settings.SetDeviceThreshold(DeviceId, threshold);
-            }
-            finally
-            {
-                _isEditingThreshold = false;
-            }
             OnPropertyChanged();
             OnPropertyChanged(nameof(ThresholdPercentText));
-            OnPropertyChanged(nameof(FollowGlobalThreshold));
-            OnPropertyChanged(nameof(IsCustomThreshold));
         }
+    }
+
+    public void CommitThresholdPercent()
+    {
+        int threshold = Math.Clamp(_thresholdDraft, 1, 100);
+        _isEditingThreshold = false;
+        if (_settings.GetThreshold(DeviceId) != threshold)
+        {
+            _settings.SetDeviceThreshold(DeviceId, threshold);
+        }
+
+        _thresholdDraft = _settings.GetThreshold(DeviceId);
+        OnPropertyChanged(nameof(ThresholdPercent));
+        OnPropertyChanged(nameof(ThresholdPercentText));
+        OnPropertyChanged(nameof(FollowGlobalThreshold));
+        OnPropertyChanged(nameof(IsCustomThreshold));
+    }
+
+    private void SyncThresholdDraftFromSettings()
+    {
+        if (_isEditingThreshold)
+        {
+            return;
+        }
+
+        int threshold = _settings.GetThreshold(DeviceId);
+        if (_thresholdDraft == threshold)
+        {
+            return;
+        }
+
+        _thresholdDraft = threshold;
+        OnPropertyChanged(nameof(ThresholdPercent));
+        OnPropertyChanged(nameof(ThresholdPercentText));
     }
 
     public string ThresholdPercentText => $"{ThresholdPercent}%";
@@ -750,14 +997,15 @@ public sealed partial class DeviceSettingsItemViewModel : ObservableObject
     [RelayCommand]
     private void RemoveHistory()
     {
-        MessageBoxResult result = ThemedMessageBox.Show(
+        string result = ThemedMessageBox.ShowOptions(
             string.Format(Loc["ConfirmForgetDeviceBody"], DisplayName),
             Loc["ConfirmForgetDeviceTitle"],
-            MessageBoxButton.YesNo,
-            MessageBoxResult.No
-        );
+            [
+                new(Loc["Cancel"], "cancel", IsDefault: true, IsCancel: true),
+                new(Loc["RemoveHistory"], "forget", IsDestructive: true),
+            ]);
 
-        if (result != MessageBoxResult.Yes)
+        if (result != "forget")
         {
             return;
         }
@@ -793,6 +1041,7 @@ public sealed partial class DeviceSettingsItemViewModel : ObservableObject
 
     public void Refresh()
     {
+        SyncThresholdDraftFromSettings();
         OnPropertyChanged(string.Empty);
     }
 }

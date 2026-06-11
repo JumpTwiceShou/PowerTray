@@ -18,11 +18,11 @@ namespace LGSTrayHID.Features
             3671, 3666, 3662, 3658, 3654, 3646, 3633, 3612, 3579, 3537
         ];
 
-        private static double LookupBatPercent(int mv)
+        internal static double LookupBatPercent(int mv)
         {
             for (int i = 0; i < _mvLUT.Length; i++)
             {
-                if (mv > _mvLUT[i])
+                if (mv >= _mvLUT[i])
                 {
                     return _mvLUT.Length - i;
                 }

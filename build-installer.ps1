@@ -1,7 +1,7 @@
 param(
     [string]$Configuration = "Release",
-    [string]$Version = "1.3.2",
-    [string]$Dotnet = "F:\logi\.dotnet-sdk\dotnet.exe",
+    [string]$Version = "1.4.0",
+    [string]$Dotnet = "dotnet",
     [string]$Iscc = ""
 )
 
@@ -92,6 +92,30 @@ function Invoke-Inno {
     }
 }
 
+function Write-InstallerChecksum {
+    param(
+        [string]$InstallerPath
+    )
+
+    if (-not (Test-Path -LiteralPath $InstallerPath -PathType Leaf)) {
+        throw "Installer output was not found: $InstallerPath"
+    }
+
+    $item = Get-Item -LiteralPath $InstallerPath
+    $hash = (Get-FileHash -LiteralPath $InstallerPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $fileName = Split-Path -Leaf $InstallerPath
+    $checksumPath = "$InstallerPath.sha256"
+    Set-Content -LiteralPath $checksumPath -Encoding ASCII -NoNewline -Value "$hash  $fileName`n"
+
+    [pscustomobject]@{
+        Path = $InstallerPath
+        ChecksumPath = $checksumPath
+        FileName = $fileName
+        Size = $item.Length
+        SHA256 = $hash
+    }
+}
+
 Push-Location $root
 try {
     Remove-Item -LiteralPath $publishRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -106,8 +130,15 @@ try {
     Invoke-Inno -SourceDir $frameworkPublish -OutputBaseFilename "PowerTraySetup" -IncludeRuntime 0
     Invoke-Inno -SourceDir $fullPublish -OutputBaseFilename "PowerTraySetup-full" -IncludeRuntime 1
 
-    Write-Host "Installer: $(Join-Path $installerOut 'PowerTraySetup.exe')"
-    Write-Host "Full installer: $(Join-Path $installerOut 'PowerTraySetup-full.exe')"
+    $installerReports = @(
+        Write-InstallerChecksum -InstallerPath (Join-Path $installerOut 'PowerTraySetup.exe')
+        Write-InstallerChecksum -InstallerPath (Join-Path $installerOut 'PowerTraySetup-full.exe')
+    )
+
+    foreach ($report in $installerReports) {
+        Write-Host ("Installer: {0} ({1:N0} bytes, SHA256 {2})" -f $report.Path, $report.Size, $report.SHA256)
+        Write-Host ("Checksum: {0}" -f $report.ChecksumPath)
+    }
 }
 finally {
     Pop-Location

@@ -116,7 +116,8 @@ internal sealed class HidppDeviceIdentity
                 productId.ToString("X4"),
                 deviceIdx.ToString("X2"),
                 interfaceNumber.ToString(),
-                deviceName
+                deviceName,
+                endpointIdentityKey
             ),
             Source = "fallbackStableHash",
             DeviceInfoRawResponse = FormatBytes(deviceInfoRawResponse),
@@ -130,12 +131,12 @@ internal sealed class HidppDeviceIdentity
         return new DeviceIdentityDiagnostic
         {
             Source = Source,
-            UnitId = UnitId,
-            ModelId = ModelId,
+            UnitIdHash = HashForDiagnostics(UnitId),
+            ModelIdHash = HashForDiagnostics(ModelId),
             SerialNumberSupported = SerialNumberSupported,
-            SerialNumber = SerialNumber,
-            DeviceInfoRawResponse = DeviceInfoRawResponse,
-            SerialRawResponse = SerialRawResponse,
+            SerialNumberHash = HashForDiagnostics(SerialNumber),
+            DeviceInfoRawResponseHash = HashForDiagnostics(DeviceInfoRawResponse),
+            SerialRawResponseHash = HashForDiagnostics(SerialRawResponse),
             FallbackReason = FallbackReason,
         };
     }
@@ -176,4 +177,15 @@ internal sealed class HidppDeviceIdentity
     private static string FormatHex(ReadOnlySpan<byte> bytes) => Convert.ToHexString(bytes);
 
     private static string? FormatBytes(byte[]? bytes) => bytes == null ? null : Convert.ToHexString(bytes);
+
+    private static string? HashForDiagnostics(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(value));
+        return Convert.ToHexString(hash[..8]).ToLowerInvariant();
+    }
 }

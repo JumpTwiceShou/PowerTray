@@ -3,6 +3,7 @@ using Hardcodet.Wpf.TaskbarNotification;
 using LGSTrayCore;
 using LGSTrayPrimitives.MessageStructs;
 using System;
+using System.Globalization;
 
 namespace LGSTrayUI
 {
@@ -54,11 +55,14 @@ namespace LGSTrayUI
         public string DisplayToolTipString => BatteryPercentage >= 0
             ?
 #if DEBUG
-            $"{DisplayName}, {BatteryPercentage:f2}% - {LastUpdate}"
+            FormatToolTipDetail(DisplayName, $"{BatteryPercentage:f2}%{BatteryVoltageText()} - {LastUpdate}")
 #else
-            $"{DisplayName}, {BatteryPercentage:f2}%"
+            FormatToolTipDetail(DisplayName, $"{BatteryPercentage:f2}%{BatteryVoltageText()}")
 #endif
-            : $"{DisplayName}, {_loc["BatteryUnknown"]}";
+            : FormatToolTipDetail(DisplayName, _loc["BatteryUnknown"]);
+
+        internal static string FormatToolTipDetail(string displayName, string detail) =>
+            $"{displayName}{GetToolTipSeparator(displayName)}{detail}";
 
         public LogiDeviceViewModel(LogiDeviceIconFactory logiDeviceIconFactory, UserSettingsWrapper userSettings, LocalizationService loc)
         {
@@ -67,6 +71,36 @@ namespace LGSTrayUI
             _loc = loc;
             _userSettings.DeviceSettingsChanged += OnDeviceSettingsChanged;
             _loc.PropertyChanged += (_, _) => RefreshDisplayProperties();
+        }
+
+        private string BatteryVoltageText() => BatteryVoltage > 0 ? $", {BatteryVoltage:0.00} V" : string.Empty;
+
+        private static string GetToolTipSeparator(string displayName)
+        {
+            string trimmed = displayName.TrimEnd();
+            char last = trimmed.Length > 0 ? trimmed[^1] : '\0';
+
+            return IsFullWidthOrCjkEnding(last) ? "，" : ", ";
+        }
+
+        private static bool IsFullWidthOrCjkEnding(char value)
+        {
+            if (value == '\0')
+            {
+                return false;
+            }
+
+            int code = value;
+            return code is >= 0x3000 and <= 0x303F // CJK symbols and punctuation
+                or >= 0x3040 and <= 0x30FF // Hiragana and Katakana
+                or >= 0x3100 and <= 0x312F // Bopomofo
+                or >= 0x31F0 and <= 0x31FF // Katakana phonetic extensions
+                or >= 0x3400 and <= 0x4DBF // CJK Unified Ideographs Extension A
+                or >= 0x4E00 and <= 0x9FFF // CJK Unified Ideographs
+                or >= 0xAC00 and <= 0xD7AF // Hangul syllables
+                or >= 0xF900 and <= 0xFAFF // CJK compatibility ideographs
+                or >= 0xFF00 and <= 0xFFEF // Halfwidth and fullwidth forms
+                || (CharUnicodeInfo.GetUnicodeCategory(value) is UnicodeCategory.OtherLetter && code >= 0x2E80);
         }
 
         private void OnDeviceSettingsChanged(string deviceId)

@@ -1,5 +1,3 @@
-# PowerTray 1.2.1
-
 This release fixes native HID++ discovery stability for C54D LIGHTSPEED receivers and improves startup ordering across Logitech HID sessions.
 
 ## Highlights

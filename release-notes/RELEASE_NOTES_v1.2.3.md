@@ -1,5 +1,3 @@
-# PowerTray 1.2.3
-
 This release fixes tray tooltip cleanup for per-device battery icons.
 
 ## Highlights
