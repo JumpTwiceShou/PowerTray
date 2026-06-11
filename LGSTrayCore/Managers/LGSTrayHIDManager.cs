@@ -177,7 +177,10 @@ namespace LGSTrayCore.Managers
 
         public void RediscoverDevices()
         {
-            _daemonCts?.Cancel();
+            if (!LGSTrayPrimitives.IPC.NativeRediscoverSignal.TrySignal())
+            {
+                Debug.WriteLine("PowerTrayHID rediscover signal is not available.");
+            }
         }
     }
 }
