@@ -107,91 +107,6 @@
             <Setter Property="VerticalScrollBarVisibility" Value="Disabled"/>
         </Style>
 
-        <Style x:Key="ModernTextMenuItem" TargetType="MenuItem">
-            <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
-            <Setter Property="FontFamily" Value="{DynamicResource UIFontFamily}"/>
-            <Setter Property="FontSize" Value="{DynamicResource UIMenuFontSize}"/>
-            <Setter Property="MinHeight" Value="28"/>
-            <Setter Property="MinWidth" Value="154"/>
-            <Setter Property="Padding" Value="10,0"/>
-            <Setter Property="OverridesDefaultStyle" Value="True"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="MenuItem">
-                        <Border x:Name="ItemBorder"
-                                Margin="0,1"
-                                Background="{TemplateBinding Background}"
-                                CornerRadius="6">
-                            <Grid MinWidth="{TemplateBinding MinWidth}"
-                                  Height="{TemplateBinding MinHeight}"
-                                  Margin="{TemplateBinding Padding}">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <ContentPresenter Grid.Column="0"
-                                                  ContentSource="Header"
-                                                  RecognizesAccessKey="True"
-                                                  HorizontalAlignment="Left"
-                                                  VerticalAlignment="Center"/>
-                                <TextBlock Grid.Column="1"
-                                           Text="{TemplateBinding InputGestureText}"
-                                           Foreground="{DynamicResource MutedTextBrush}"
-                                           Margin="18,0,0,0"
-                                           VerticalAlignment="Center"/>
-                            </Grid>
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsHighlighted" Value="True">
-                                <Setter TargetName="ItemBorder" Property="Background" Value="{DynamicResource MenuHoverBrush}"/>
-                            </Trigger>
-                            <Trigger Property="IsEnabled" Value="False">
-                                <Setter Property="Foreground" Value="{DynamicResource DisabledTextBrush}"/>
-                                <Setter TargetName="ItemBorder" Property="Opacity" Value="0.6"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
-        <Style x:Key="ModernTextSeparator" TargetType="Separator">
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="Separator">
-                        <Border Height="1"
-                                Margin="8,4"
-                                Background="{DynamicResource MenuSeparatorBrush}"/>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
-        <Style x:Key="ModernTextContextMenu" TargetType="ContextMenu">
-            <Setter Property="Background" Value="{DynamicResource MenuBackgroundBrush}"/>
-            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrushSoft}"/>
-            <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
-            <Setter Property="HasDropShadow" Value="False"/>
-            <Setter Property="OverridesDefaultStyle" Value="True"/>
-            <Setter Property="Padding" Value="3"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="ContextMenu">
-                        <Border Background="{TemplateBinding Background}"
-                                BorderBrush="{TemplateBinding BorderBrush}"
-                                BorderThickness="1"
-                                CornerRadius="8"
-                                Padding="{TemplateBinding Padding}"
-                                SnapsToDevicePixels="True">
-                            <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle"/>
-                        </Border>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-            <Setter Property="ItemContainerStyle" Value="{StaticResource ModernTextMenuItem}"/>
-        </Style>
-
         <ControlTemplate x:Key="DiagnosticsScrollThumbTemplate" TargetType="Thumb">
             <Border x:Name="ThumbBorder"
                     Margin="2"
@@ -984,30 +899,6 @@
                                  Background="Transparent"
                                  FontFamily="Consolas"
                                  FontSize="{DynamicResource UIMonospaceFontSize}">
-                            <TextBox.ContextMenu>
-                                <ContextMenu Style="{StaticResource ModernTextContextMenu}">
-                                    <ContextMenu.Resources>
-                                        <Style TargetType="Separator" BasedOn="{StaticResource ModernTextSeparator}"/>
-                                    </ContextMenu.Resources>
-                                    <MenuItem Header="{Binding PlacementTarget.DataContext.Loc[ContextCut], RelativeSource={RelativeSource AncestorType=ContextMenu}}"
-                                              InputGestureText="Ctrl+X"
-                                              Command="{x:Static ApplicationCommands.Cut}"
-                                              CommandTarget="{Binding PlacementTarget, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
-                                    <MenuItem Header="{Binding PlacementTarget.DataContext.Loc[ContextCopy], RelativeSource={RelativeSource AncestorType=ContextMenu}}"
-                                              InputGestureText="Ctrl+C"
-                                              Command="{x:Static ApplicationCommands.Copy}"
-                                              CommandTarget="{Binding PlacementTarget, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
-                                    <MenuItem Header="{Binding PlacementTarget.DataContext.Loc[ContextPaste], RelativeSource={RelativeSource AncestorType=ContextMenu}}"
-                                              InputGestureText="Ctrl+V"
-                                              Command="{x:Static ApplicationCommands.Paste}"
-                                              CommandTarget="{Binding PlacementTarget, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
-                                    <Separator/>
-                                    <MenuItem Header="{Binding PlacementTarget.DataContext.Loc[ContextSelectAll], RelativeSource={RelativeSource AncestorType=ContextMenu}}"
-                                              InputGestureText="Ctrl+A"
-                                              Command="{x:Static ApplicationCommands.SelectAll}"
-                                              CommandTarget="{Binding PlacementTarget, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
-                                </ContextMenu>
-                            </TextBox.ContextMenu>
                             <TextBox.Resources>
                                 <Style TargetType="ScrollBar" BasedOn="{StaticResource DiagnosticsScrollBarStyle}"/>
                             </TextBox.Resources>
