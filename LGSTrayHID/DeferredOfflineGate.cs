@@ -18,7 +18,7 @@ internal sealed class DeferredOfflineGate : IDisposable
     )
     {
         _addDiagnosticEvent = addDiagnosticEvent;
-        _hashDeviceIdForDiagnostics = hashDeviceIdForDiagnostics ?? static x => x;
+        _hashDeviceIdForDiagnostics = hashDeviceIdForDiagnostics ?? (static x => x);
     }
 
     public void BeginDeferral(string reason, TimeSpan duration)
