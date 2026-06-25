@@ -11,20 +11,27 @@ namespace LGSTrayHID
     public sealed class HidppManagerContext
     {
         private const ushort LOGITECH_VENDOR_ID = 0x046D;
+        private const int HOTPLUG_LEFT_REDISCOVER_DELAY_MS = 500;
+        private const int HOTPLUG_OFFLINE_GRACE_MS = 3000;
+        private const int REDISCOVER_FOLLOW_UP_DELAY_MS = 250;
         private static readonly int[] HotplugArrivalRediscoverDelaysMs = [50, 300, 1000];
 
         public static readonly HidppManagerContext _instance = new();
         public static HidppManagerContext Instance => _instance;
 
         private readonly object _sync = new();
+        private readonly object _offlineDeferralSync = new();
         private readonly List<HidppDevices> _sessions = [];
+        private readonly Dictionary<string, CancellationTokenSource> _deferredOfflineSignals = new(StringComparer.OrdinalIgnoreCase);
         private readonly HidApiHotPlugEventCallbackFn _hotplugCallback;
         private readonly SemaphoreSlim _rediscoverLock = new(1, 1);
 
         private CancellationToken _cancellationToken;
         private HidHotPlugCallbackHandle _hotplugHandle;
         private int _rediscoverQueued;
+        private int _rediscoverRequestedWhileRunning;
         private int _hotplugArrivalRediscoverQueued;
+        private DateTimeOffset _deferOfflineUntil = DateTimeOffset.MinValue;
 
         public delegate void HidppDeviceEventHandler(IPCMessageType messageType, IPCMessage message);
 
@@ -42,26 +49,56 @@ namespace LGSTrayHID
 
         public void SignalDeviceEvent(IPCMessageType messageType, IPCMessage message)
         {
+            switch (messageType)
+            {
+                case IPCMessageType.INIT when message is InitMessage initMessage:
+                    CancelDeferredOffline(initMessage.deviceId);
+                    break;
+                case IPCMessageType.UPDATE when message is UpdateMessage updateMessage:
+                    CancelDeferredOffline(updateMessage.deviceId);
+                    break;
+                case IPCMessageType.OFFLINE when message is DeviceOfflineMessage offlineMessage:
+                    if (TryDeferOffline(offlineMessage))
+                    {
+                        return;
+                    }
+                    break;
+            }
+
             HidppDeviceEvent?.Invoke(messageType, message);
         }
 
         private unsafe int HotplugEvent(HidHotPlugCallbackHandle _, HidDeviceInfo* device, HidApiHotPlugEvent hotplugEvent, nint __)
         {
             bool deviceArrived = (hotplugEvent & HidApiHotPlugEvent.HID_API_HOTPLUG_EVENT_DEVICE_ARRIVED) != 0;
-            if ((hotplugEvent & HidApiHotPlugEvent.HID_API_HOTPLUG_EVENT_DEVICE_LEFT) != 0 && device != null)
+            bool deviceLeft = (hotplugEvent & HidApiHotPlugEvent.HID_API_HOTPLUG_EVENT_DEVICE_LEFT) != 0;
+            if (deviceLeft)
             {
-                HidDeviceInfo deviceInfo = *device;
-                string pathHash = NativeDiagnosticsStore.HashForDiagnostics(deviceInfo.GetPath());
-                SignalSessionsOfflineForEndpoint(pathHash, "hotplugLeft");
+                BeginOfflineDeferral("hotplugLeft", HOTPLUG_OFFLINE_GRACE_MS);
+
+                if (device != null)
+                {
+                    HidDeviceInfo deviceInfo = *device;
+                    string pathHash = NativeDiagnosticsStore.HashForDiagnostics(deviceInfo.GetPath());
+                    NativeDiagnosticsStore.AddEvent($"Hotplug left detected for endpoint pathHash={pathHash}; offline signals deferred");
+                }
+                else
+                {
+                    NativeDiagnosticsStore.AddEvent("Hotplug left detected without endpoint details; offline signals deferred");
+                }
             }
 
             if (deviceArrived)
             {
                 ScheduleHotplugArrivalRediscover();
             }
+            else if (deviceLeft)
+            {
+                ScheduleRediscover(HOTPLUG_LEFT_REDISCOVER_DELAY_MS, "hotplugLeft");
+            }
             else
             {
-                ScheduleRediscover(250);
+                ScheduleRediscover(250, "hotplug");
             }
 
             return 0;
@@ -97,6 +134,8 @@ namespace LGSTrayHID
                 _hotplugHandle = 0;
             }
 
+            CancelAllDeferredOfflineSignals();
+
             lock (_sync)
             {
                 foreach (var session in _sessions)
@@ -108,7 +147,7 @@ namespace LGSTrayHID
             }
         }
 
-        private void ScheduleRediscover(int delayMs = 1000)
+        private void ScheduleRediscover(int delayMs = 1000, string reason = "scheduled")
         {
             if (_cancellationToken.IsCancellationRequested)
             {
@@ -117,15 +156,19 @@ namespace LGSTrayHID
 
             if (Interlocked.Exchange(ref _rediscoverQueued, 1) == 1)
             {
+                QueueRediscoverAfterCurrent($"already queued after {reason}");
                 return;
             }
+
+            NativeDiagnosticsStore.AddEvent($"Rediscover scheduled in {delayMs}ms after {reason}");
 
             _ = Task.Run(async () =>
             {
                 try
                 {
                     await Task.Delay(delayMs, _cancellationToken);
-                    RediscoverDevices();
+                    Interlocked.Exchange(ref _rediscoverQueued, 0);
+                    RediscoverDevices(reason);
                 }
                 catch (OperationCanceledException) { }
                 finally
@@ -144,6 +187,7 @@ namespace LGSTrayHID
 
             if (Interlocked.Exchange(ref _hotplugArrivalRediscoverQueued, 1) == 1)
             {
+                QueueRediscoverAfterCurrent("hotplug arrival burst already queued");
                 return;
             }
 
@@ -159,7 +203,7 @@ namespace LGSTrayHID
                         int waitMs = Math.Max(0, delayMs - previousDelayMs);
                         previousDelayMs = delayMs;
                         await Task.Delay(waitMs, _cancellationToken);
-                        RediscoverDevices();
+                        RediscoverDevices("hotplugArrival");
                     }
                 }
                 catch (OperationCanceledException) { }
@@ -168,6 +212,143 @@ namespace LGSTrayHID
                     Interlocked.Exchange(ref _hotplugArrivalRediscoverQueued, 0);
                 }
             });
+        }
+
+        private void QueueRediscoverAfterCurrent(string reason)
+        {
+            if (_cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+
+            Interlocked.Exchange(ref _rediscoverRequestedWhileRunning, 1);
+            NativeDiagnosticsStore.AddEvent($"Rediscover queued after active discovery ({reason})");
+        }
+
+        private void ScheduleQueuedRediscoverIfNeeded()
+        {
+            if (_cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+
+            if (Interlocked.Exchange(ref _rediscoverRequestedWhileRunning, 0) == 1)
+            {
+                ScheduleRediscover(REDISCOVER_FOLLOW_UP_DELAY_MS, "queuedDuringDiscovery");
+            }
+        }
+
+        private void BeginOfflineDeferral(string reason, int durationMs)
+        {
+            DateTimeOffset until = DateTimeOffset.Now.AddMilliseconds(durationMs);
+            lock (_offlineDeferralSync)
+            {
+                if (until > _deferOfflineUntil)
+                {
+                    _deferOfflineUntil = until;
+                }
+            }
+
+            NativeDiagnosticsStore.AddEvent($"Deferring offline signals for {durationMs}ms after {reason}");
+        }
+
+        private bool TryDeferOffline(DeviceOfflineMessage offlineMessage)
+        {
+            if (string.IsNullOrWhiteSpace(offlineMessage.deviceId))
+            {
+                return false;
+            }
+
+            TimeSpan delay;
+            CancellationTokenSource cts = new();
+            lock (_offlineDeferralSync)
+            {
+                delay = _deferOfflineUntil - DateTimeOffset.Now;
+                if (delay <= TimeSpan.Zero)
+                {
+                    cts.Dispose();
+                    return false;
+                }
+
+                if (_deferredOfflineSignals.Remove(offlineMessage.deviceId, out CancellationTokenSource? previousCts))
+                {
+                    previousCts.Cancel();
+                }
+
+                _deferredOfflineSignals[offlineMessage.deviceId] = cts;
+            }
+
+            NativeDiagnosticsStore.AddEvent(
+                $"Deferred offline for device hash={NativeDiagnosticsStore.HashForDiagnostics(offlineMessage.deviceId)}"
+            );
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(delay, cts.Token);
+                    lock (_offlineDeferralSync)
+                    {
+                        if (!_deferredOfflineSignals.TryGetValue(offlineMessage.deviceId, out CancellationTokenSource? currentCts)
+                            || !ReferenceEquals(currentCts, cts))
+                        {
+                            return;
+                        }
+
+                        _deferredOfflineSignals.Remove(offlineMessage.deviceId);
+                    }
+
+                    HidppDeviceEvent?.Invoke(IPCMessageType.OFFLINE, offlineMessage);
+                }
+                catch (OperationCanceledException) { }
+                finally
+                {
+                    cts.Dispose();
+                }
+            });
+
+            return true;
+        }
+
+        private void CancelDeferredOffline(string deviceId)
+        {
+            if (string.IsNullOrWhiteSpace(deviceId))
+            {
+                return;
+            }
+
+            CancellationTokenSource? cts = null;
+            lock (_offlineDeferralSync)
+            {
+                if (_deferredOfflineSignals.Remove(deviceId, out CancellationTokenSource? existingCts))
+                {
+                    cts = existingCts;
+                }
+            }
+
+            if (cts != null)
+            {
+                cts.Cancel();
+                NativeDiagnosticsStore.AddEvent(
+                    $"Cancelled deferred offline for device hash={NativeDiagnosticsStore.HashForDiagnostics(deviceId)}"
+                );
+            }
+        }
+
+        private void CancelAllDeferredOfflineSignals()
+        {
+            CancellationTokenSource[] deferredSignals;
+            lock (_offlineDeferralSync)
+            {
+                deferredSignals = [.. _deferredOfflineSignals.Values];
+                _deferredOfflineSignals.Clear();
+                _deferOfflineUntil = DateTimeOffset.MinValue;
+            }
+
+            foreach (CancellationTokenSource cts in deferredSignals)
+            {
+                cts.Cancel();
+            }
         }
 
         private void SignalSessionsOfflineForEndpoint(string pathHash, string reason)
@@ -191,6 +372,11 @@ namespace LGSTrayHID
 
         public void RediscoverDevices()
         {
+            RediscoverDevices("requested");
+        }
+
+        private void RediscoverDevices(string reason)
+        {
             if (_cancellationToken.IsCancellationRequested)
             {
                 return;
@@ -198,7 +384,8 @@ namespace LGSTrayHID
 
             if (!_rediscoverLock.Wait(0))
             {
-                NativeDiagnosticsStore.AddEvent("Rediscover skipped; discovery already running");
+                NativeDiagnosticsStore.AddEvent($"Rediscover skipped; discovery already running after {reason}");
+                QueueRediscoverAfterCurrent(reason);
                 return;
             }
 
@@ -266,12 +453,14 @@ namespace LGSTrayHID
                     finally
                     {
                         _rediscoverLock.Release();
+                        ScheduleQueuedRediscoverIfNeeded();
                     }
                 });
             }
             catch
             {
                 _rediscoverLock.Release();
+                ScheduleQueuedRediscoverIfNeeded();
                 throw;
             }
         }
