@@ -3,6 +3,7 @@ using LGSTrayHID;
 using LGSTrayHID.Features;
 using LGSTrayUI;
 using LGSTrayPrimitives;
+using LGSTrayPrimitives.MessageStructs;
 using System.Text.Json;
 
 static void Assert(bool condition, string message)
@@ -130,6 +131,48 @@ static void TestTrayToolTipSeparators()
     Assert(LogiDeviceViewModel.FormatToolTipDetail("Ｇ５０２", "39.00%") == "Ｇ５０２，39.00%", "Full-width tooltip separator should be a full-width comma.");
 }
 
+static async Task TestDeferredOfflineGateDelaysOffline()
+{
+    List<string> emitted = [];
+    using DeferredOfflineGate gate = new();
+
+    gate.BeginDeferral("testHotplug", TimeSpan.FromMilliseconds(40));
+    bool deferred = gate.TryDefer(new DeviceOfflineMessage("device-1"), message => emitted.Add(message.deviceId));
+
+    Assert(deferred, "Offline message should be deferred during the grace window.");
+    Assert(emitted.Count == 0, "Deferred offline message should not be emitted immediately.");
+
+    await Task.Delay(120);
+    Assert(emitted.Count == 1 && emitted[0] == "device-1", "Deferred offline message should be emitted after the grace window.");
+}
+
+static async Task TestDeferredOfflineGateCancelsOffline()
+{
+    List<string> emitted = [];
+    using DeferredOfflineGate gate = new();
+
+    gate.BeginDeferral("testHotplug", TimeSpan.FromMilliseconds(80));
+    bool deferred = gate.TryDefer(new DeviceOfflineMessage("device-2"), message => emitted.Add(message.deviceId));
+    bool cancelled = gate.Cancel("device-2");
+
+    Assert(deferred, "Offline message should be deferred before cancellation.");
+    Assert(cancelled, "Pending deferred offline message should be cancellable by device id.");
+
+    await Task.Delay(160);
+    Assert(emitted.Count == 0, "Cancelled deferred offline message should never be emitted.");
+}
+
+static void TestDeferredOfflineGatePassesThroughOutsideGraceWindow()
+{
+    List<string> emitted = [];
+    using DeferredOfflineGate gate = new();
+
+    bool deferred = gate.TryDefer(new DeviceOfflineMessage("device-3"), message => emitted.Add(message.deviceId));
+
+    Assert(!deferred, "Offline message should not be deferred outside the grace window.");
+    Assert(emitted.Count == 0, "Gate should not emit pass-through messages; the caller owns immediate emission.");
+}
+
 TestXmlEscaping();
 TestBattery1F20Decode();
 TestBattery1001LookupBoundaries();
@@ -137,5 +180,8 @@ TestNativeIdentityDiagnosticsRedaction();
 TestUpdaterAssetSelectionAndChecksum();
 TestHttpServerLoopbackFallback();
 TestTrayToolTipSeparators();
+await TestDeferredOfflineGateDelaysOffline();
+await TestDeferredOfflineGateCancelsOffline();
+TestDeferredOfflineGatePassesThroughOutsideGraceWindow();
 
 Console.WriteLine("PowerTray.Tests passed.");
