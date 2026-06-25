@@ -1,6 +1,6 @@
 param(
     [string]$Configuration = "Release",
-    [string]$Version = "1.4.0",
+    [string]$Version = "1.4.1",
     [string]$Dotnet = "dotnet",
     [string]$Iscc = ""
 )
