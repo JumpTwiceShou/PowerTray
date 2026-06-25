@@ -1,6 +1,5 @@
 using LGSTrayHID.HidApi;
 using LGSTrayPrimitives.MessageStructs;
-using System.Collections.Concurrent;
 
 using static LGSTrayHID.HidApi.HidApi;
 using static LGSTrayHID.HidApi.HidApiHotPlug;
@@ -20,9 +19,11 @@ namespace LGSTrayHID
         public static HidppManagerContext Instance => _instance;
 
         private readonly object _sync = new();
-        private readonly object _offlineDeferralSync = new();
         private readonly List<HidppDevices> _sessions = [];
-        private readonly Dictionary<string, CancellationTokenSource> _deferredOfflineSignals = new(StringComparer.OrdinalIgnoreCase);
+        private readonly DeferredOfflineGate _offlineGate = new(
+            NativeDiagnosticsStore.AddEvent,
+            NativeDiagnosticsStore.HashForDiagnostics
+        );
         private readonly HidApiHotPlugEventCallbackFn _hotplugCallback;
         private readonly SemaphoreSlim _rediscoverLock = new(1, 1);
 
@@ -31,7 +32,6 @@ namespace LGSTrayHID
         private int _rediscoverQueued;
         private int _rediscoverRequestedWhileRunning;
         private int _hotplugArrivalRediscoverQueued;
-        private DateTimeOffset _deferOfflineUntil = DateTimeOffset.MinValue;
 
         public delegate void HidppDeviceEventHandler(IPCMessageType messageType, IPCMessage message);
 
@@ -52,13 +52,13 @@ namespace LGSTrayHID
             switch (messageType)
             {
                 case IPCMessageType.INIT when message is InitMessage initMessage:
-                    CancelDeferredOffline(initMessage.deviceId);
+                    _offlineGate.Cancel(initMessage.deviceId);
                     break;
                 case IPCMessageType.UPDATE when message is UpdateMessage updateMessage:
-                    CancelDeferredOffline(updateMessage.deviceId);
+                    _offlineGate.Cancel(updateMessage.deviceId);
                     break;
                 case IPCMessageType.OFFLINE when message is DeviceOfflineMessage offlineMessage:
-                    if (TryDeferOffline(offlineMessage))
+                    if (_offlineGate.TryDefer(offlineMessage, EmitOffline))
                     {
                         return;
                     }
@@ -68,13 +68,18 @@ namespace LGSTrayHID
             HidppDeviceEvent?.Invoke(messageType, message);
         }
 
+        private void EmitOffline(DeviceOfflineMessage offlineMessage)
+        {
+            HidppDeviceEvent?.Invoke(IPCMessageType.OFFLINE, offlineMessage);
+        }
+
         private unsafe int HotplugEvent(HidHotPlugCallbackHandle _, HidDeviceInfo* device, HidApiHotPlugEvent hotplugEvent, nint __)
         {
             bool deviceArrived = (hotplugEvent & HidApiHotPlugEvent.HID_API_HOTPLUG_EVENT_DEVICE_ARRIVED) != 0;
             bool deviceLeft = (hotplugEvent & HidApiHotPlugEvent.HID_API_HOTPLUG_EVENT_DEVICE_LEFT) != 0;
             if (deviceLeft)
             {
-                BeginOfflineDeferral("hotplugLeft", HOTPLUG_OFFLINE_GRACE_MS);
+                _offlineGate.BeginDeferral("hotplugLeft", TimeSpan.FromMilliseconds(HOTPLUG_OFFLINE_GRACE_MS));
 
                 if (device != null)
                 {
@@ -134,7 +139,7 @@ namespace LGSTrayHID
                 _hotplugHandle = 0;
             }
 
-            CancelAllDeferredOfflineSignals();
+            _offlineGate.CancelAll();
 
             lock (_sync)
             {
@@ -235,138 +240,6 @@ namespace LGSTrayHID
             if (Interlocked.Exchange(ref _rediscoverRequestedWhileRunning, 0) == 1)
             {
                 ScheduleRediscover(REDISCOVER_FOLLOW_UP_DELAY_MS, "queuedDuringDiscovery");
-            }
-        }
-
-        private void BeginOfflineDeferral(string reason, int durationMs)
-        {
-            DateTimeOffset until = DateTimeOffset.Now.AddMilliseconds(durationMs);
-            lock (_offlineDeferralSync)
-            {
-                if (until > _deferOfflineUntil)
-                {
-                    _deferOfflineUntil = until;
-                }
-            }
-
-            NativeDiagnosticsStore.AddEvent($"Deferring offline signals for {durationMs}ms after {reason}");
-        }
-
-        private bool TryDeferOffline(DeviceOfflineMessage offlineMessage)
-        {
-            if (string.IsNullOrWhiteSpace(offlineMessage.deviceId))
-            {
-                return false;
-            }
-
-            TimeSpan delay;
-            CancellationTokenSource cts = new();
-            lock (_offlineDeferralSync)
-            {
-                delay = _deferOfflineUntil - DateTimeOffset.Now;
-                if (delay <= TimeSpan.Zero)
-                {
-                    cts.Dispose();
-                    return false;
-                }
-
-                if (_deferredOfflineSignals.Remove(offlineMessage.deviceId, out CancellationTokenSource? previousCts))
-                {
-                    previousCts.Cancel();
-                }
-
-                _deferredOfflineSignals[offlineMessage.deviceId] = cts;
-            }
-
-            NativeDiagnosticsStore.AddEvent(
-                $"Deferred offline for device hash={NativeDiagnosticsStore.HashForDiagnostics(offlineMessage.deviceId)}"
-            );
-
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    await Task.Delay(delay, cts.Token);
-                    lock (_offlineDeferralSync)
-                    {
-                        if (!_deferredOfflineSignals.TryGetValue(offlineMessage.deviceId, out CancellationTokenSource? currentCts)
-                            || !ReferenceEquals(currentCts, cts))
-                        {
-                            return;
-                        }
-
-                        _deferredOfflineSignals.Remove(offlineMessage.deviceId);
-                    }
-
-                    HidppDeviceEvent?.Invoke(IPCMessageType.OFFLINE, offlineMessage);
-                }
-                catch (OperationCanceledException) { }
-                finally
-                {
-                    cts.Dispose();
-                }
-            });
-
-            return true;
-        }
-
-        private void CancelDeferredOffline(string deviceId)
-        {
-            if (string.IsNullOrWhiteSpace(deviceId))
-            {
-                return;
-            }
-
-            CancellationTokenSource? cts = null;
-            lock (_offlineDeferralSync)
-            {
-                if (_deferredOfflineSignals.Remove(deviceId, out CancellationTokenSource? existingCts))
-                {
-                    cts = existingCts;
-                }
-            }
-
-            if (cts != null)
-            {
-                cts.Cancel();
-                NativeDiagnosticsStore.AddEvent(
-                    $"Cancelled deferred offline for device hash={NativeDiagnosticsStore.HashForDiagnostics(deviceId)}"
-                );
-            }
-        }
-
-        private void CancelAllDeferredOfflineSignals()
-        {
-            CancellationTokenSource[] deferredSignals;
-            lock (_offlineDeferralSync)
-            {
-                deferredSignals = [.. _deferredOfflineSignals.Values];
-                _deferredOfflineSignals.Clear();
-                _deferOfflineUntil = DateTimeOffset.MinValue;
-            }
-
-            foreach (CancellationTokenSource cts in deferredSignals)
-            {
-                cts.Cancel();
-            }
-        }
-
-        private void SignalSessionsOfflineForEndpoint(string pathHash, string reason)
-        {
-            if (string.IsNullOrWhiteSpace(pathHash))
-            {
-                return;
-            }
-
-            lock (_sync)
-            {
-                foreach (var session in _sessions)
-                {
-                    if (session.MatchesEndpointPathHash(pathHash))
-                    {
-                        session.SignalKnownDevicesOffline(reason);
-                    }
-                }
             }
         }
 
