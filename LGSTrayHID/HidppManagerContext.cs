@@ -1,6 +1,5 @@
 using LGSTrayHID.HidApi;
 using LGSTrayPrimitives.MessageStructs;
-using System.Collections.Concurrent;
 
 using static LGSTrayHID.HidApi.HidApi;
 using static LGSTrayHID.HidApi.HidApiHotPlug;
@@ -11,6 +10,9 @@ namespace LGSTrayHID
     public sealed class HidppManagerContext
     {
         private const ushort LOGITECH_VENDOR_ID = 0x046D;
+        private const int HOTPLUG_LEFT_REDISCOVER_DELAY_MS = 500;
+        private const int HOTPLUG_OFFLINE_GRACE_MS = 3000;
+        private const int REDISCOVER_FOLLOW_UP_DELAY_MS = 250;
         private static readonly int[] HotplugArrivalRediscoverDelaysMs = [50, 300, 1000];
 
         public static readonly HidppManagerContext _instance = new();
@@ -18,12 +20,17 @@ namespace LGSTrayHID
 
         private readonly object _sync = new();
         private readonly List<HidppDevices> _sessions = [];
+        private readonly DeferredOfflineGate _offlineGate = new(
+            NativeDiagnosticsStore.AddEvent,
+            NativeDiagnosticsStore.HashForDiagnostics
+        );
         private readonly HidApiHotPlugEventCallbackFn _hotplugCallback;
         private readonly SemaphoreSlim _rediscoverLock = new(1, 1);
 
         private CancellationToken _cancellationToken;
         private HidHotPlugCallbackHandle _hotplugHandle;
         private int _rediscoverQueued;
+        private int _rediscoverRequestedWhileRunning;
         private int _hotplugArrivalRediscoverQueued;
 
         public delegate void HidppDeviceEventHandler(IPCMessageType messageType, IPCMessage message);
@@ -42,26 +49,61 @@ namespace LGSTrayHID
 
         public void SignalDeviceEvent(IPCMessageType messageType, IPCMessage message)
         {
+            switch (messageType)
+            {
+                case IPCMessageType.INIT when message is InitMessage initMessage:
+                    _offlineGate.Cancel(initMessage.deviceId);
+                    break;
+                case IPCMessageType.UPDATE when message is UpdateMessage updateMessage:
+                    _offlineGate.Cancel(updateMessage.deviceId);
+                    break;
+                case IPCMessageType.OFFLINE when message is DeviceOfflineMessage offlineMessage:
+                    if (_offlineGate.TryDefer(offlineMessage, EmitOffline))
+                    {
+                        return;
+                    }
+                    break;
+            }
+
             HidppDeviceEvent?.Invoke(messageType, message);
+        }
+
+        private void EmitOffline(DeviceOfflineMessage offlineMessage)
+        {
+            HidppDeviceEvent?.Invoke(IPCMessageType.OFFLINE, offlineMessage);
         }
 
         private unsafe int HotplugEvent(HidHotPlugCallbackHandle _, HidDeviceInfo* device, HidApiHotPlugEvent hotplugEvent, nint __)
         {
             bool deviceArrived = (hotplugEvent & HidApiHotPlugEvent.HID_API_HOTPLUG_EVENT_DEVICE_ARRIVED) != 0;
-            if ((hotplugEvent & HidApiHotPlugEvent.HID_API_HOTPLUG_EVENT_DEVICE_LEFT) != 0 && device != null)
+            bool deviceLeft = (hotplugEvent & HidApiHotPlugEvent.HID_API_HOTPLUG_EVENT_DEVICE_LEFT) != 0;
+            if (deviceLeft)
             {
-                HidDeviceInfo deviceInfo = *device;
-                string pathHash = NativeDiagnosticsStore.HashForDiagnostics(deviceInfo.GetPath());
-                SignalSessionsOfflineForEndpoint(pathHash, "hotplugLeft");
+                _offlineGate.BeginDeferral("hotplugLeft", TimeSpan.FromMilliseconds(HOTPLUG_OFFLINE_GRACE_MS));
+
+                if (device != null)
+                {
+                    HidDeviceInfo deviceInfo = *device;
+                    string pathHash = NativeDiagnosticsStore.HashForDiagnostics(deviceInfo.GetPath());
+                    NativeDiagnosticsStore.AddEvent($"Hotplug left detected for endpoint pathHash={pathHash}; offline signals deferred");
+                }
+                else
+                {
+                    NativeDiagnosticsStore.AddEvent("Hotplug left detected without endpoint details; offline signals deferred");
+                }
             }
 
             if (deviceArrived)
             {
                 ScheduleHotplugArrivalRediscover();
             }
+            else if (deviceLeft)
+            {
+                ScheduleRediscover(HOTPLUG_LEFT_REDISCOVER_DELAY_MS, "hotplugLeft");
+            }
             else
             {
-                ScheduleRediscover(250);
+                ScheduleRediscover(250, "hotplug");
             }
 
             return 0;
@@ -97,6 +139,8 @@ namespace LGSTrayHID
                 _hotplugHandle = 0;
             }
 
+            _offlineGate.CancelAll();
+
             lock (_sync)
             {
                 foreach (var session in _sessions)
@@ -108,7 +152,7 @@ namespace LGSTrayHID
             }
         }
 
-        private void ScheduleRediscover(int delayMs = 1000)
+        private void ScheduleRediscover(int delayMs = 1000, string reason = "scheduled")
         {
             if (_cancellationToken.IsCancellationRequested)
             {
@@ -117,15 +161,19 @@ namespace LGSTrayHID
 
             if (Interlocked.Exchange(ref _rediscoverQueued, 1) == 1)
             {
+                QueueRediscoverAfterCurrent($"already queued after {reason}");
                 return;
             }
+
+            NativeDiagnosticsStore.AddEvent($"Rediscover scheduled in {delayMs}ms after {reason}");
 
             _ = Task.Run(async () =>
             {
                 try
                 {
                     await Task.Delay(delayMs, _cancellationToken);
-                    RediscoverDevices();
+                    Interlocked.Exchange(ref _rediscoverQueued, 0);
+                    RediscoverDevices(reason);
                 }
                 catch (OperationCanceledException) { }
                 finally
@@ -144,6 +192,7 @@ namespace LGSTrayHID
 
             if (Interlocked.Exchange(ref _hotplugArrivalRediscoverQueued, 1) == 1)
             {
+                QueueRediscoverAfterCurrent("hotplug arrival burst already queued");
                 return;
             }
 
@@ -159,7 +208,7 @@ namespace LGSTrayHID
                         int waitMs = Math.Max(0, delayMs - previousDelayMs);
                         previousDelayMs = delayMs;
                         await Task.Delay(waitMs, _cancellationToken);
-                        RediscoverDevices();
+                        RediscoverDevices("hotplugArrival");
                     }
                 }
                 catch (OperationCanceledException) { }
@@ -170,26 +219,36 @@ namespace LGSTrayHID
             });
         }
 
-        private void SignalSessionsOfflineForEndpoint(string pathHash, string reason)
+        private void QueueRediscoverAfterCurrent(string reason)
         {
-            if (string.IsNullOrWhiteSpace(pathHash))
+            if (_cancellationToken.IsCancellationRequested)
             {
                 return;
             }
 
-            lock (_sync)
+            Interlocked.Exchange(ref _rediscoverRequestedWhileRunning, 1);
+            NativeDiagnosticsStore.AddEvent($"Rediscover queued after active discovery ({reason})");
+        }
+
+        private void ScheduleQueuedRediscoverIfNeeded()
+        {
+            if (_cancellationToken.IsCancellationRequested)
             {
-                foreach (var session in _sessions)
-                {
-                    if (session.MatchesEndpointPathHash(pathHash))
-                    {
-                        session.SignalKnownDevicesOffline(reason);
-                    }
-                }
+                return;
+            }
+
+            if (Interlocked.Exchange(ref _rediscoverRequestedWhileRunning, 0) == 1)
+            {
+                ScheduleRediscover(REDISCOVER_FOLLOW_UP_DELAY_MS, "queuedDuringDiscovery");
             }
         }
 
         public void RediscoverDevices()
+        {
+            RediscoverDevices("requested");
+        }
+
+        private void RediscoverDevices(string reason)
         {
             if (_cancellationToken.IsCancellationRequested)
             {
@@ -198,7 +257,8 @@ namespace LGSTrayHID
 
             if (!_rediscoverLock.Wait(0))
             {
-                NativeDiagnosticsStore.AddEvent("Rediscover skipped; discovery already running");
+                NativeDiagnosticsStore.AddEvent($"Rediscover skipped; discovery already running after {reason}");
+                QueueRediscoverAfterCurrent(reason);
                 return;
             }
 
@@ -266,12 +326,14 @@ namespace LGSTrayHID
                     finally
                     {
                         _rediscoverLock.Release();
+                        ScheduleQueuedRediscoverIfNeeded();
                     }
                 });
             }
             catch
             {
                 _rediscoverLock.Release();
+                ScheduleQueuedRediscoverIfNeeded();
                 throw;
             }
         }
