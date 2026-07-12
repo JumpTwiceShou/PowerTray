@@ -252,3 +252,10 @@ hidapi 0.15.0 稳定代码
 ## 提交
 
 - `77097bb` (`Build reproducible hidapi and validate installers`)：固定源码/工具链/native build、ABI 门禁、shutdown 修复、RID lock、安装器编译与 smoke 结果；正式 hidapi DLL 未替换。
+- `9e3248f` (`Record PowerTray validation status`)：记录 blocked 硬件门禁、安装器 task 归档与实现提交。
+
+## 设备同步
+
+- Windows VM102 `C:\dev\repos\logi\LGSTrayBattery-master` 已推送并验证为私有 `origin/main` `9e3248f`。
+- Ubuntu VM101 `~/src/repos/logi/LGSTrayBattery-master` tracked tree 干净，执行 `pull --ff-only` 后已验证 local/origin 均为 `9e3248f`。
+- 当前 Windows 物理机清单路径 `D:\dev\repos\logi\LGSTrayBattery-master` 在 VM102 不存在，无法从本设备检查或同步，记录为 `pending-device-sync`，不冒充已同步。

@@ -58,6 +58,7 @@
 - `completed`：实际编译、checksum/signature、轻量/完整版安装升级卸载验证全部完成。
 - 安装器仍为本地 ignored build output；未上传、未创建 tag/Release/PR，未使用公开仓库。
 - 实现与验证提交：`77097bb` (`Build reproducible hidapi and validate installers`)。
+- 任务状态提交：`9e3248f` (`Record PowerTray validation status`)；Windows VM102 与 Ubuntu VM101 已同步到该提交，未挂载的物理 Windows `D:` 路径为 `pending-device-sync`。
 
 ## 完成标准
 
