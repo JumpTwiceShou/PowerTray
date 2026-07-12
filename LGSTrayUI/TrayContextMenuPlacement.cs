@@ -85,14 +85,24 @@ internal static class TrayContextMenuPlacement
 
     private static void SyncResolvedBrush(string targetKey, string sourceKey)
     {
-        if (Application.Current?.TryFindResource(targetKey) is not SolidColorBrush target ||
-            Application.Current.TryFindResource(sourceKey) is not SolidColorBrush source)
+        Application? application = Application.Current;
+        if (application?.TryFindResource(sourceKey) is not SolidColorBrush source)
         {
             return;
         }
 
-        target.Color = source.Color;
-        target.Opacity = source.Opacity;
+        ReplaceResolvedBrush(application.Resources, targetKey, source);
+    }
+
+    internal static void ReplaceResolvedBrush(
+        ResourceDictionary resources,
+        string targetKey,
+        SolidColorBrush source)
+    {
+        // XAML resources may be frozen even when declared as mutable. Replacing the
+        // application-level resource is safe; mutating the existing brush can crash
+        // the tray callback with InvalidOperationException.
+        resources[targetKey] = source.CloneCurrentValue();
     }
 
     private static Size MeasureMenu(ContextMenu menu)

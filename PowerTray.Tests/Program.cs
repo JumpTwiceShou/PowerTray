@@ -10,6 +10,8 @@ using MessagePipe;
 using Microsoft.Extensions.DependencyInjection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Windows;
+using System.Windows.Media;
 
 static void Assert(bool condition, string message)
 {
@@ -161,6 +163,22 @@ static void TestTrayToolTipSeparators()
     Assert(LogiDeviceViewModel.FormatToolTipDetail("G502", "39.00%") == "G502, 39.00%", "ASCII tooltip separator should be a comma plus a space.");
     Assert(LogiDeviceViewModel.FormatToolTipDetail("マウス", "39.00%") == "マウス，39.00%", "Japanese tooltip separator should be a full-width comma.");
     Assert(LogiDeviceViewModel.FormatToolTipDetail("Ｇ５０２", "39.00%") == "Ｇ５０２，39.00%", "Full-width tooltip separator should be a full-width comma.");
+}
+
+static void TestTrayMenuPaletteReplacesFrozenBrush()
+{
+    ResourceDictionary resources = new();
+    SolidColorBrush frozenTarget = new(Colors.White);
+    frozenTarget.Freeze();
+    SolidColorBrush frozenSource = new(Color.FromRgb(0x18, 0x1B, 0x21));
+    frozenSource.Freeze();
+    resources["target"] = frozenTarget;
+
+    TrayContextMenuPlacement.ReplaceResolvedBrush(resources, "target", frozenSource);
+
+    SolidColorBrush resolved = (SolidColorBrush)resources["target"];
+    Assert(!ReferenceEquals(resolved, frozenTarget), "Tray palette refresh must replace a frozen resource instead of mutating it.");
+    Assert(resolved.Color == frozenSource.Color, "Tray palette replacement must preserve the active theme color.");
 }
 
 static async Task TestDeferredOfflineGateDelaysOffline()
@@ -470,6 +488,7 @@ TestNativeIdentityDiagnosticsRedaction();
 TestUpdaterAssetSelectionAndChecksum();
 TestHttpServerLoopbackFallback();
 TestTrayToolTipSeparators();
+TestTrayMenuPaletteReplacesFrozenBrush();
 await TestDeferredOfflineGateDelaysOffline();
 await TestDeferredOfflineGateCancelsOffline();
 TestDeferredOfflineGatePassesThroughOutsideGraceWindow();
