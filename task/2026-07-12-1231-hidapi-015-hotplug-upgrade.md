@@ -2,7 +2,7 @@
 
 - Task ID: `2026-07-12-1231-hidapi-015-hotplug-upgrade`
 - 创建时间: `2026-07-12 12:31 +09:00`
-- 状态: `blocked`
+- 状态: `in_progress`
 - 优先级: `high`
 - 目标应用版本: `1.4.2`
 - 来源: `task/2026-07-12-1156-hidapi-provenance-and-update-key-backup.md`
@@ -108,6 +108,7 @@ hidapi 0.15.0 稳定代码
 - [x] 检查 hotplug 回调线程上下文是否允许当前 C# callback 只做轻量排队。
 - [x] 检查 callback deregistration 和 `HidppManagerContext.DisposeAsync` 的顺序。
 - [x] 修复多个托盘设备提示框未统一跟随 PowerTray 主题的问题，并在深色/浅色主题下验证。
+- [ ] 修复深色主题托盘右键菜单 Header、设备子菜单背景和设备文字未统一跟随主题的问题，并实机验证。
 - [ ] 仅在完成代码和 ABI 检查后替换 `LGSTrayHID/libhidapi/hidapi.dll`。
 - [ ] 更新 `verify-hidapi.ps1` 中固定 SHA-256 和 export 检查。
 - [ ] 更新 `LGSTrayHID/libhidapi/readme.md`，记录准确 commit、工具链、命令、flags 和产物证据。
@@ -290,3 +291,6 @@ hidapi 0.15.0 稳定代码
 - Ubuntu VM101 `~/src/repos/logi/LGSTrayBattery-master` tracked tree 干净，执行 `pull --ff-only` 后已验证 local/origin 均为 `9e3248f`。
 - 当前 Windows 物理机清单路径 `D:\dev\repos\logi\LGSTrayBattery-master` 在 VM102 不存在，无法从本设备检查或同步，记录为 `pending-device-sync`，不冒充已同步。
 - 当前 Windows 物理机已将 `efa1ed2` 与 `b6333b1` 推送到私有 `sync/main`；`git ls-remote` 复核 local HEAD 与 `sync/main` 均为 `b6333b1516aa61cbb426b8eb38e851eea5f83b66`，tracked/untracked worktree 均干净。公共 `origin` 未改动。
+- 托盘主题修复完成后继续原 1.4.2 总任务；隔离候选 UI/helper 自 2026-07-12 18:49 起保持运行，恢复两小时资源与设备状态采样，并并行完成无需物理操作的接口、事件日志和文档门禁。只有再次到达确实需要接收器拔插、耳机充电线或系统休眠的步骤时才请求维护者动作。
+- 深色托盘右键菜单第一次修复后的实机截图仍显示两类回归：自定义 Header 中的禁用文字继续被 `ContextMenu.Resources` 内隐式 `TextBlock.Foreground` 覆盖，设备子菜单的独立 `Popup` 仍无法可靠解析父菜单动态背景资源。第二轮修复删除冲突的 `TextBlock.Foreground`，让所有标题继承 `MenuItem.Foreground`，并把子菜单 Border 绑定到 `PART_Popup.PlacementTarget.Tag`；每次打开前仍由 `TrayContextMenuPlacement.ApplyCurrentTheme` 显式写入当前调色板。
+- 维护者随后提供的最新截图确认第二轮仍有设备子菜单背景透明/回退问题。第三轮改为让 Popup Border 通过 `TemplateBinding Tag` 直接读取其模板宿主 `MenuItem` 上已解析的当前主题背景，不再跨 Popup 名称作用域取 `PlacementTarget`；子菜单边框同样通过 `TemplateBinding BorderBrush` 获取，打开菜单前显式刷新到所有已实现菜单项。设备名称 `TextBlock` 也显式绑定所属 `MenuItem.Foreground`，避免独立 Popup 中的文字继承链失效。`LGSTrayUI` Debug build 为 `0 warning / 0 error`，`PowerTray.Tests passed`，`git diff --check` 通过；新 `PowerTray.dll` SHA-256 为 `BFBC1550...EDE9`，已通过 `--shutdown` 优雅替换进隔离 runtime 并重启，PowerTray/PowerTrayHID 均响应且无新 PowerTray runtime error。最终视觉门禁仍等待维护者确认，因此本项暂不勾选。

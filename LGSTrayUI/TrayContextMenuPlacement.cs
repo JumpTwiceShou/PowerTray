@@ -6,6 +6,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Interop;
+using System.Windows.Media;
 
 namespace LGSTrayUI;
 
@@ -55,6 +56,7 @@ internal static class TrayContextMenuPlacement
             menu.IsOpen = false;
         }
 
+        ApplyCurrentTheme(menu);
         CursorPlacementMetrics metrics = GetCursorPlacementMetrics();
         Size menuSize = MeasureMenu(menu);
         Point location = CalculateMenuLocation(metrics.Cursor, metrics.WorkArea, menuSize);
@@ -66,6 +68,63 @@ internal static class TrayContextMenuPlacement
         menu.IsOpen = true;
 
         SetForegroundWindow(menu);
+    }
+
+    private static void ApplyCurrentTheme(ContextMenu menu)
+    {
+        ThemeService.ApplyCurrentResources();
+        if (Application.Current == null)
+        {
+            return;
+        }
+
+        Brush? background = Application.Current.TryFindResource("MenuBackgroundBrush") as Brush;
+        Brush? border = Application.Current.TryFindResource("BorderBrushSoft") as Brush;
+        Brush? foreground = Application.Current.TryFindResource("TextBrush") as Brush;
+
+        if (background != null)
+        {
+            menu.Background = background;
+        }
+
+        if (border != null)
+        {
+            menu.BorderBrush = border;
+        }
+
+        if (foreground != null)
+        {
+            menu.Foreground = foreground;
+            ApplyItemTheme(menu.Items, foreground, background, border);
+        }
+    }
+
+    private static void ApplyItemTheme(
+        ItemCollection items,
+        Brush foreground,
+        Brush? popupBackground,
+        Brush? popupBorder)
+    {
+        foreach (object item in items)
+        {
+            if (item is not MenuItem menuItem)
+            {
+                continue;
+            }
+
+            menuItem.Foreground = foreground;
+            if (popupBackground != null)
+            {
+                menuItem.Tag = popupBackground;
+            }
+
+            if (popupBorder != null)
+            {
+                menuItem.BorderBrush = popupBorder;
+            }
+
+            ApplyItemTheme(menuItem.Items, foreground, popupBackground, popupBorder);
+        }
     }
 
     private static Size MeasureMenu(ContextMenu menu)

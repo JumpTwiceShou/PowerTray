@@ -7,6 +7,8 @@
     <Style x:Key="TrayMenuItemStyle" TargetType="MenuItem">
         <Setter Property="Background" Value="Transparent"/>
         <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource BorderBrushSoft}"/>
+        <Setter Property="Tag" Value="{DynamicResource MenuBackgroundBrush}"/>
         <Setter Property="FontFamily" Value="{DynamicResource UIFontFamily}"/>
         <Setter Property="FontSize" Value="{DynamicResource UIMenuFontSize}"/>
         <Setter Property="MinHeight" Value="26"/>
@@ -32,6 +34,7 @@
                                 </Grid.ColumnDefinitions>
                                 <ContentPresenter Grid.Column="0"
                                                   ContentSource="Header"
+                                                  TextElement.Foreground="{TemplateBinding Foreground}"
                                                   RecognizesAccessKey="True"
                                                   HorizontalAlignment="Stretch"
                                                   VerticalAlignment="Center"/>
@@ -52,8 +55,8 @@
                                IsOpen="{Binding IsSubmenuOpen, RelativeSource={RelativeSource TemplatedParent}}"
                                Placement="Right"
                                PopupAnimation="Fade">
-                            <Border Background="{DynamicResource MenuBackgroundBrush}"
-                                    BorderBrush="{DynamicResource BorderBrushSoft}"
+                            <Border Background="{TemplateBinding Tag}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
                                     BorderThickness="1"
                                     CornerRadius="8"
                                     Padding="2">
@@ -121,7 +124,6 @@
             <Style TargetType="MenuItem" BasedOn="{StaticResource TrayMenuItemStyle}"/>
             <Style TargetType="Separator" BasedOn="{StaticResource TraySeparatorStyle}"/>
             <Style TargetType="TextBlock">
-                <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
                 <Setter Property="FontFamily" Value="{DynamicResource UIFontFamily}"/>
                 <Setter Property="FontSize" Value="{DynamicResource UIMenuFontSize}"/>
             </Style>
@@ -155,6 +157,7 @@
                                    Visibility="{Binding IsChecked, Converter={StaticResource BoolToVisibilityConverter}}"/>
                         <TextBlock Grid.Column="1"
                                    Text="{Binding DisplayName}"
+                                   Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=MenuItem}}"
                                    TextTrimming="CharacterEllipsis"/>
                     </Grid>
                 </DataTemplate>
