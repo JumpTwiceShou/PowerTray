@@ -169,7 +169,19 @@ begin
     Exit;
   end;
 
-  Result := HasRuntime8FromDotnet(FrameworkName, 'dotnet');
+  if FileExists(ExpandConstant('{commonpf64}\dotnet\dotnet.exe')) and
+     HasRuntime8FromDotnet(FrameworkName, ExpandConstant('{commonpf64}\dotnet\dotnet.exe')) then
+  begin
+    Result := True;
+    Exit;
+  end;
+
+  if FileExists(ExpandConstant('{localappdata}\Microsoft\dotnet\dotnet.exe')) and
+     HasRuntime8FromDotnet(FrameworkName, ExpandConstant('{localappdata}\Microsoft\dotnet\dotnet.exe')) then
+  begin
+    Result := True;
+    Exit;
+  end;
 end;
 
 function HasRequiredDotnet8(): Boolean;
@@ -190,24 +202,57 @@ begin
   end;
 end;
 
-procedure StopProcess(ProcessName: String);
+procedure StopInstalledProcess(ExeName: String; RequestGracefulShutdown: Boolean);
 var
+  TargetPath: String;
+  PowerShellPath: String;
+  ScriptPath: String;
+  Script: String;
   ResultCode: Integer;
 begin
-  Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM ' + ProcessName, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  if ResultCode = 0 then
+  TargetPath := ExpandConstant('{app}\') + ExeName;
+  if not FileExists(TargetPath) then
+    Exit;
+
+  if RequestGracefulShutdown then
   begin
-    Sleep(1200);
-    Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM ' + ProcessName + ' /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Exec(TargetPath, '--shutdown', ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Sleep(2500);
   end;
+
+  PowerShellPath := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
+  if not FileExists(PowerShellPath) then
+    Exit;
+
+  ScriptPath := ExpandConstant('{tmp}\PowerTrayStopInstalledProcess.ps1');
+  Script :=
+    'param([string]$TargetPath,[string]$ProcessName)' + #13#10 +
+    '$expected = [IO.Path]::GetFullPath($TargetPath)' + #13#10 +
+    'Get-Process -Name ([IO.Path]::GetFileNameWithoutExtension($ProcessName)) -ErrorAction SilentlyContinue | ForEach-Object {' + #13#10 +
+    '  try {' + #13#10 +
+    '    if ($_.Path -and ([IO.Path]::GetFullPath($_.Path) -eq $expected)) {' + #13#10 +
+    '      Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue' + #13#10 +
+    '    }' + #13#10 +
+    '  } catch {}' + #13#10 +
+    '}' + #13#10;
+  SaveStringToFile(ScriptPath, Script, False);
+  Exec(
+    PowerShellPath,
+    '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + ScriptPath + '" "' + TargetPath + '" "' + ExeName + '"',
+    '',
+    SW_HIDE,
+    ewWaitUntilTerminated,
+    ResultCode
+  );
+  DeleteFile(ScriptPath);
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
-  StopProcess('{#AppExeName}');
-  StopProcess('{#HidExeName}');
-  StopProcess('LGSTray.exe');
-  StopProcess('LGSTrayHID.exe');
+  StopInstalledProcess('{#AppExeName}', True);
+  StopInstalledProcess('{#HidExeName}', False);
+  StopInstalledProcess('LGSTray.exe', False);
+  StopInstalledProcess('LGSTrayHID.exe', False);
   Result := '';
 end;
 
@@ -301,8 +346,8 @@ procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usUninstall then
   begin
-    StopProcess('{#AppExeName}');
-    StopProcess('{#HidExeName}');
+    StopInstalledProcess('{#AppExeName}', True);
+    StopInstalledProcess('{#HidExeName}', False);
     RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'PowerTray');
   end;
 end;

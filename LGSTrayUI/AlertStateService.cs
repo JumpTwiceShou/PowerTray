@@ -52,6 +52,35 @@ public sealed class AlertStateService
         }
     }
 
+    public void Remove(string deviceId)
+    {
+        SetBlinking(deviceId, false);
+    }
+
+    public void Migrate(string oldDeviceId, string newDeviceId)
+    {
+        if (string.Equals(oldDeviceId, newDeviceId, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        bool changed = false;
+        lock (_blinkingDevices)
+        {
+            bool wasBlinking = _blinkingDevices.Remove(oldDeviceId);
+            if (wasBlinking)
+            {
+                _blinkingDevices[newDeviceId] = true;
+                changed = true;
+            }
+        }
+
+        if (changed)
+        {
+            Changed?.Invoke();
+        }
+    }
+
     public void ClearAll()
     {
         lock (_blinkingDevices)

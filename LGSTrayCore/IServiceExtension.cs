@@ -14,6 +14,7 @@ public static class IServiceExtension
         var settings = configs.Get<AppSettings>()!;
         if (!settings.HTTPServer.Enabled) return;
 
+        services.AddSingleton<HttpServerStatus>();
         services.AddSingleton<HttpControllerFactory>();
         services.AddHostedService<HttpServer.HttpServer>();
     }

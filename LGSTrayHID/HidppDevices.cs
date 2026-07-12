@@ -9,12 +9,14 @@ using static LGSTrayHID.HidApi.HidApi;
 
 namespace LGSTrayHID
 {
-    public sealed class HidppDevices : IDisposable
+    public sealed class HidppDevices : IDisposable, IAsyncDisposable
     {
         public const byte SW_ID = 0x0A;
 
         private const int READ_TIMEOUT = 100;
         private const int DEFAULT_COMMAND_TIMEOUT = 250;
+        private const int COMMAND_QUEUE_TIMEOUT = 5000;
+        private const int THREAD_JOIN_TIMEOUT_MS = 2000;
         private const int C54D_COMMAND_TIMEOUT = 600;
         private const int C54D_COMMAND_ATTEMPTS = 2;
         private const int DEFAULT_COMMAND_ATTEMPTS = 2;
@@ -33,15 +35,19 @@ namespace LGSTrayHID
         private readonly DiscoverySessionDiagnostic _diagnostics;
         private readonly Dictionary<ushort, HidppDevice> _deviceCollection = [];
         private readonly object _handleSync = new();
-        private readonly HashSet<nint> _closedHandles = [];
-        private readonly HashSet<nint> _expectedClosedHandles = [];
+        private readonly object _reopenSync = new();
+        private readonly object _taskSync = new();
+        private readonly HashSet<SafeHidDeviceHandle> _expectedClosedHandles = [];
+        private readonly Dictionary<SafeHidDeviceHandle, Thread> _readerThreads = [];
+        private readonly List<Task> _backgroundTasks = [];
         private readonly HashSet<string> _knownDeviceIds = [];
         private readonly SemaphoreSlim _commandSemaphore = new(1, 1);
-        private readonly Channel<byte[]> _channel = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(64)
+        private readonly Channel<byte[]> _channel = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(256)
         {
-            FullMode = BoundedChannelFullMode.DropOldest,
+            FullMode = BoundedChannelFullMode.Wait,
             SingleReader = false,
             SingleWriter = false,
+            AllowSynchronousContinuations = false,
         });
 
         private HidDevicePtr _devShort = IntPtr.Zero;
@@ -54,8 +60,11 @@ namespace LGSTrayHID
         private byte? _centurionDeviceAddress;
         private int _centurionProbeAttempts;
         private readonly HashSet<string> _offlineSignalledDeviceIds = [];
+        private readonly Dictionary<string, int> _centurionFailureCounts = [];
         private int _disposeCount;
         private int _started;
+        private int _readerShutdownTimedOut;
+        private Task? _disposeTask;
 
         public IReadOnlyDictionary<ushort, HidppDevice> DeviceCollection => _deviceCollection;
         public HidDevicePtr DevShort => _devShort;
@@ -63,6 +72,9 @@ namespace LGSTrayHID
         public ushort ProductId => _shortEndpoint.ProductId;
         public int InterfaceNumber => _shortEndpoint.InterfaceNumber;
         internal string EndpointIdentityKey => $"{_shortEndpoint.SafeId}:{_shortEndpoint.PathHash}";
+        internal string ReceiverStableId => _shortEndpoint.ReceiverStableId;
+        internal string PersistentEndpointAlias => _shortEndpoint.PersistentEndpointAlias;
+        internal string SessionConfigurationKey => $"{EndpointIdentityKey}|{_longEndpoint?.SafeId}:{_longEndpoint?.PathHash}";
         internal byte CenturionReportId => _centurionReportId;
         internal byte? CenturionDeviceAddress => _centurionDeviceAddress;
         internal int CenturionProbeAttempts => _centurionProbeAttempts;
@@ -70,6 +82,7 @@ namespace LGSTrayHID
             _shortEndpoint.PathHash.Equals(pathHash, StringComparison.OrdinalIgnoreCase)
             || (_longEndpoint?.PathHash.Equals(pathHash, StringComparison.OrdinalIgnoreCase) ?? false);
         public bool Disposed => _disposeCount > 0;
+        internal bool ReaderShutdownTimedOut => Volatile.Read(ref _readerShutdownTimedOut) != 0;
         internal CancellationToken LifetimeToken => _lifetimeCts.Token;
 
         internal HidppDevices(HidEndpointInfo shortEndpoint, HidEndpointInfo? longEndpoint)
@@ -119,18 +132,173 @@ namespace LGSTrayHID
             await DiscoverDevicesAsync();
         }
 
+        internal async Task RefreshDiscoveryAsync(bool forcePresenceReport)
+        {
+            if (Disposed)
+            {
+                return;
+            }
+
+            NativeDiagnosticsStore.ReattachSession(_diagnostics);
+            await DiscoverDevicesAsync();
+            int attempts = forcePresenceReport ? GlobalSettings.settings.ConsecutiveFailureThreshold : 1;
+            await ProbePresenceAsync(attempts, forcePresenceReport);
+        }
+
+        internal void RecoverTransport(string reason)
+        {
+            lock (_reopenSync)
+            {
+                if (Disposed)
+                {
+                    return;
+                }
+
+                ReopenShortEndpointCore(reason);
+                if (_longEndpoint != null)
+                {
+                    ReopenLongEndpointCore(reason);
+                }
+            }
+        }
+
+        internal async Task ProbePresenceAsync(int attempts = 1, bool forcePublish = false)
+        {
+            HidppDevice[] devices;
+            lock (_deviceCollection)
+            {
+                devices = _deviceCollection.Values.ToArray();
+            }
+
+            foreach (HidppDevice device in devices)
+            {
+                for (int attempt = 1; attempt <= Math.Max(1, attempts); attempt++)
+                {
+                    if (await device.ProbePresenceAsync(forcePublish))
+                    {
+                        break;
+                    }
+
+                    if (attempt < attempts)
+                    {
+                        await Task.Delay(COMMAND_RETRY_DELAY_MS * attempt, _lifetimeCts.Token);
+                    }
+                }
+            }
+        }
+
         public void Dispose()
         {
-            if (Interlocked.Increment(ref _disposeCount) != 1)
+            DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            lock (_taskSync)
+            {
+                _disposeTask ??= DisposeCoreAsync();
+                return new ValueTask(_disposeTask);
+            }
+        }
+
+        private async Task DisposeCoreAsync()
+        {
+            if (Interlocked.Exchange(ref _disposeCount, 1) != 0)
             {
                 return;
             }
 
             _readCts?.Cancel();
             _lifetimeCts.Cancel();
+            _channel.Writer.TryComplete();
+
+            HidDevicePtr shortHandle;
+            HidDevicePtr longHandle;
+            lock (_reopenSync)
+            {
+                lock (_handleSync)
+                {
+                    shortHandle = _devShort;
+                    longHandle = _devLong;
+                    MarkExpectedClose(shortHandle);
+                    MarkExpectedClose(longHandle);
+                    _devShort = IntPtr.Zero;
+                    _devLong = IntPtr.Zero;
+                }
+
+                CloseEndpoint(shortHandle);
+                CloseEndpoint(longHandle);
+            }
+
+            Thread[] readers;
+            lock (_taskSync)
+            {
+                readers = _readerThreads.Values.Distinct().ToArray();
+            }
+
+            await Task.Run(() =>
+            {
+                foreach (Thread reader in readers)
+                {
+                    if (reader.IsAlive && !reader.Join(THREAD_JOIN_TIMEOUT_MS))
+                    {
+                        Interlocked.Exchange(ref _readerShutdownTimedOut, 1);
+                        NativeDiagnosticsStore.RecordError($"HID read thread did not stop within {THREAD_JOIN_TIMEOUT_MS}ms.");
+                    }
+                }
+            });
+
+            while (true)
+            {
+                Task[] backgroundTasks;
+                lock (_taskSync)
+                {
+                    backgroundTasks = _backgroundTasks.ToArray();
+                }
+
+                if (backgroundTasks.Length == 0)
+                {
+                    break;
+                }
+
+                try
+                {
+                    await Task.WhenAll(backgroundTasks);
+                }
+                catch (OperationCanceledException)
+                {
+                }
+                catch (Exception ex)
+                {
+                    NativeDiagnosticsStore.RecordError($"HID background task shutdown failed: {ex.GetType().Name}: {ex.Message}");
+                }
+            }
+
             _readCts?.Dispose();
             _readCts = null;
-            _channel.Writer.TryComplete();
+            _lifetimeCts.Dispose();
+            _commandSemaphore.Dispose();
+        }
+
+        internal void TrackBackgroundTask(Task task)
+        {
+            lock (_taskSync)
+            {
+                _backgroundTasks.Add(task);
+            }
+
+            _ = task.ContinueWith(completed =>
+            {
+                lock (_taskSync)
+                {
+                    _backgroundTasks.Remove(completed);
+                }
+
+                if (completed.IsFaulted && completed.Exception != null)
+                {
+                    NativeDiagnosticsStore.RecordError($"HID background task faulted: {completed.Exception.GetBaseException().Message}");
+                }
+            }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
         }
 
         private static HidDevicePtr OpenEndpoint(HidEndpointInfo endpoint)
@@ -151,11 +319,21 @@ namespace LGSTrayHID
 
         private void StartReadThread(HidDevicePtr dev, CancellationToken cancellationToken)
         {
+            if (dev.SafeHandle == null)
+            {
+                return;
+            }
+
             Thread thread = new(() => ReadLoop(dev, cancellationToken))
             {
                 IsBackground = true,
                 Priority = ThreadPriority.BelowNormal,
+                Name = $"PowerTray HID reader {EndpointIdentityKey}",
             };
+            lock (_taskSync)
+            {
+                _readerThreads[dev.SafeHandle] = thread;
+            }
             thread.Start();
         }
 
@@ -191,6 +369,13 @@ namespace LGSTrayHID
                 }
 
                 CloseEndpoint(dev);
+                if (dev.SafeHandle != null)
+                {
+                    lock (_taskSync)
+                    {
+                        _readerThreads.Remove(dev.SafeHandle);
+                    }
+                }
             }
         }
 
@@ -215,7 +400,10 @@ namespace LGSTrayHID
                 return;
             }
 
-            _channel.Writer.TryWrite(buffer);
+            if (!_channel.Writer.TryWrite(buffer) && !Disposed)
+            {
+                NativeDiagnosticsStore.RecordError("HID response channel rejected a response.");
+            }
         }
 
         private void QueueDeviceInit(byte deviceIdx)
@@ -230,14 +418,25 @@ namespace LGSTrayHID
                 _deviceCollection[deviceIdx] = new(this, deviceIdx);
             }
 
-            _ = Task.Run(async () =>
+            Task initTask = Task.Run(async () =>
             {
+                HidppDevice device;
+                lock (_deviceCollection)
+                {
+                    device = _deviceCollection[deviceIdx];
+                }
+
                 try
                 {
-                    await _deviceCollection[deviceIdx].InitAsync();
+                    await device.InitAsync();
+                    if (string.IsNullOrWhiteSpace(device.Identifier))
+                    {
+                        RemoveUninitializedDevice(deviceIdx, device, "missingIdentifier");
+                    }
                 }
                 catch (Exception ex)
                 {
+                    RemoveUninitializedDevice(deviceIdx, device, ex.GetType().Name);
 #if DEBUG
                     Console.WriteLine($"Failed to initialise device index {deviceIdx}: {ex}");
 #else
@@ -245,6 +444,22 @@ namespace LGSTrayHID
 #endif
                 }
             });
+            TrackBackgroundTask(initTask);
+        }
+
+        private void RemoveUninitializedDevice(byte deviceIdx, HidppDevice device, string reason)
+        {
+            lock (_deviceCollection)
+            {
+                if (_deviceCollection.TryGetValue(deviceIdx, out HidppDevice? current) && ReferenceEquals(current, device))
+                {
+                    _deviceCollection.Remove(deviceIdx);
+                }
+            }
+
+            NativeDiagnosticsStore.AddEvent(
+                $"{NativeDiagnosticsStore.FormatHex(_shortEndpoint.ProductId, 4)}: device initialization removed index={NativeDiagnosticsStore.FormatHex(deviceIdx, 2)} reason={reason}"
+            );
         }
 
         private void SignalOnline(byte deviceIdx)
@@ -445,14 +660,15 @@ namespace LGSTrayHID
             string? serial = await ReadCenturionSerialAsync(features, request);
             if (!HidppDeviceIdentity.IsMeaningfulTextIdentifier(serial))
             {
-                serial = HidppDeviceIdentity.CreateStableFallbackIdentifier(
-                    $"fallback-{_shortEndpoint.ProductId:X4}",
+                string identityAlias = string.Join('|',
+                    "centurion",
+                    string.IsNullOrWhiteSpace(ReceiverStableId) ? PersistentEndpointAlias : ReceiverStableId,
                     _shortEndpoint.ProductId.ToString("X4"),
-                    _shortEndpoint.InterfaceNumber.ToString(),
                     _centurionReportId.ToString("X2"),
-                    _centurionDeviceAddress?.ToString("X2"),
+                    _centurionDeviceAddress?.ToString("X2") ?? string.Empty,
                     name
                 );
+                serial = PersistentDeviceIdentityStore.GetOrCreate(identityAlias);
             }
             string deviceId = $"centurion-{serial}";
             bool hasBattery = features.ContainsKey(0x0104);
@@ -484,22 +700,27 @@ namespace LGSTrayHID
                 HidppManagerContext.Instance.SignalDeviceEvent(IPCMessageType.UPDATE, initialBattery);
             }
 
-            _ = Task.Run(async () =>
+            Task pollTask = Task.Run(async () =>
             {
                 CancellationToken cancellationToken = _lifetimeCts.Token;
                 while (!cancellationToken.IsCancellationRequested)
                 {
                     try
                     {
-                        await Task.Delay(GlobalSettings.settings.PollPeriod * 1000, cancellationToken);
+                        await Task.Delay(TimeSpan.FromSeconds(GlobalSettings.settings.PollPeriod), cancellationToken);
                         await UpdateCenturionBatteryAsync(deviceId, features, request);
                     }
                     catch (OperationCanceledException)
                     {
                         break;
                     }
+                    catch (Exception ex)
+                    {
+                        NativeDiagnosticsStore.RecordError($"Centurion poll failed: {ex.GetType().Name}: {ex.Message}");
+                    }
                 }
-            });
+            }, _lifetimeCts.Token);
+            TrackBackgroundTask(pollTask);
 
 #if DEBUG
             Console.WriteLine($"Centurion headset ready: {name} {deviceId}");
@@ -664,13 +885,29 @@ namespace LGSTrayHID
                 lock (_offlineSignalledDeviceIds)
                 {
                     _offlineSignalledDeviceIds.Remove(deviceId);
+                    _centurionFailureCounts.Remove(deviceId);
                 }
 
+                NativeDiagnosticsStore.RecordCommandSuccess();
                 HidppManagerContext.Instance.SignalDeviceEvent(IPCMessageType.UPDATE, update);
                 return;
             }
 
-            SignalOffline(deviceId);
+            int failures;
+            lock (_offlineSignalledDeviceIds)
+            {
+                failures = _centurionFailureCounts.TryGetValue(deviceId, out int existing) ? existing + 1 : 1;
+                _centurionFailureCounts[deviceId] = failures;
+            }
+            NativeDiagnosticsStore.AddEvent($"Centurion battery unavailable ({failures}/{GlobalSettings.settings.ConsecutiveFailureThreshold}).");
+            if (DeviceTransportPolicy.ShouldSignalOffline(failures, GlobalSettings.settings.ConsecutiveFailureThreshold))
+            {
+                SignalOffline(deviceId);
+                if (failures == GlobalSettings.settings.ConsecutiveFailureThreshold)
+                {
+                    RecoverTransport("centurionBatteryUnavailable");
+                }
+            }
         }
 
         private void SignalOffline(string deviceId)
@@ -740,7 +977,22 @@ namespace LGSTrayHID
                 return null;
             }
 
-            return new UpdateMessage(deviceId, battery.Value.batteryPercentage, battery.Value.status, battery.Value.batteryMVolt, DateTimeOffset.Now, -1);
+            if (!double.IsFinite(battery.Value.batteryPercentage) ||
+                battery.Value.batteryPercentage < 0 ||
+                battery.Value.batteryPercentage > 100)
+            {
+                NativeDiagnosticsStore.RecordError("Rejected invalid Centurion battery percentage.");
+                return null;
+            }
+
+            return new UpdateMessage(
+                deviceId,
+                Math.Clamp(battery.Value.batteryPercentage, 0, 100),
+                battery.Value.status,
+                battery.Value.batteryMVolt,
+                DateTimeOffset.Now,
+                -1
+            );
         }
 
         private async Task<bool> ProbeCenturionDeviceAddressAsync()
@@ -947,14 +1199,16 @@ namespace LGSTrayHID
                 return [];
             }
 
-            bool locked = await _commandSemaphore.WaitAsync(timeout);
+            bool locked = await _commandSemaphore.WaitAsync(COMMAND_QUEUE_TIMEOUT, _lifetimeCts.Token);
             if (!locked)
             {
+                NativeDiagnosticsStore.RecordError("HID++ 1.0 command queue timeout.");
                 return [];
             }
 
             try
             {
+                DrainResponseChannel();
                 await hidDevicePtr.WriteAsync(buffer);
 
                 using CancellationTokenSource cts = new(timeout);
@@ -963,8 +1217,9 @@ namespace LGSTrayHID
                     try
                     {
                         byte[] ret = await _channel.Reader.ReadAsync(cts.Token);
-                        if (ret.Length >= 4 && ret[0] == 0x10 && ret[1] == buffer[1] && ret[2] == buffer[2])
+                        if (ret.Length >= 4 && ret[0] == 0x10 && ret[1] == buffer[1] && ret[2] == buffer[2] && ret[3] == buffer[3])
                         {
+                            NativeDiagnosticsStore.RecordCommandSuccess();
                             return ret;
                         }
                     }
@@ -999,14 +1254,16 @@ namespace LGSTrayHID
             bool c54dShortRequest = ShouldUseC54dRecovery(targetsShortEndpoint, request, buffer);
             int commandTimeout = c54dShortRequest ? Math.Max(timeout, C54D_COMMAND_TIMEOUT) : timeout;
             int attempts = c54dShortRequest ? C54D_COMMAND_ATTEMPTS : DEFAULT_COMMAND_ATTEMPTS;
-            bool locked = await _commandSemaphore.WaitAsync(commandTimeout);
+            bool locked = await _commandSemaphore.WaitAsync(COMMAND_QUEUE_TIMEOUT, _lifetimeCts.Token);
             if (!locked)
             {
+                NativeDiagnosticsStore.RecordError("HID++ 2.0 command queue timeout.");
                 return (Hidpp20)Array.Empty<byte>();
             }
 
             try
             {
+                DrainResponseChannel();
                 for (int attempt = 1; attempt <= attempts; attempt++)
                 {
                     HidDevicePtr writeDevice = targetsShortEndpoint ? _devShort : hidDevicePtr;
@@ -1093,8 +1350,11 @@ namespace LGSTrayHID
                         continue;
                     }
 
-                    if (ret.GetFeatureIndex() == buffer.GetFeatureIndex() && ret.GetSoftwareId() == SW_ID)
+                    if (ret.GetFeatureIndex() == buffer.GetFeatureIndex() &&
+                        ret.GetFunctionId() == buffer.GetFunctionId() &&
+                        ret.GetSoftwareId() == buffer.GetSoftwareId())
                     {
+                        NativeDiagnosticsStore.RecordCommandSuccess();
                         return ret;
                     }
                 }
@@ -1109,6 +1369,20 @@ namespace LGSTrayHID
             }
 
             return firstErrorResponse;
+        }
+
+        private void DrainResponseChannel()
+        {
+            int drained = 0;
+            while (_channel.Reader.TryRead(out _))
+            {
+                drained++;
+            }
+
+            if (drained > 0)
+            {
+                NativeDiagnosticsStore.AddEvent($"Discarded {drained} stale HID responses before command.");
+            }
         }
 
         private bool ShouldUseC54dRecovery(bool targetsShortEndpoint, byte[] request, Hidpp20 buffer)
@@ -1169,10 +1443,16 @@ namespace LGSTrayHID
 
         private void ReopenShortEndpoint(string reason)
         {
-            HidDevicePtr reopened = OpenEndpoint(_shortEndpoint);
-            if (reopened == IntPtr.Zero)
+            lock (_reopenSync)
             {
-                AddFailure("reopenShortFailed");
+                ReopenShortEndpointCore(reason);
+            }
+        }
+
+        private void ReopenShortEndpointCore(string reason)
+        {
+            if (Disposed)
+            {
                 return;
             }
 
@@ -1180,12 +1460,35 @@ namespace LGSTrayHID
             lock (_handleSync)
             {
                 previous = _devShort;
-                _devShort = reopened;
+                _devShort = IntPtr.Zero;
             }
 
             MarkExpectedClose(previous);
             CloseEndpoint(previous);
+            if (!JoinReader(previous))
+            {
+                AddFailure("reopenShortReaderStopTimeout");
+                SignalKnownDevicesOffline("reopenShortReaderStopTimeout");
+                return;
+            }
 
+            if (Disposed)
+            {
+                return;
+            }
+
+            HidDevicePtr reopened = OpenEndpoint(_shortEndpoint);
+            if (reopened == IntPtr.Zero)
+            {
+                AddFailure("reopenShortFailed");
+                SignalKnownDevicesOffline("reopenShortFailed");
+                return;
+            }
+
+            lock (_handleSync)
+            {
+                _devShort = reopened;
+            }
             if (_readCts != null)
             {
                 StartReadThread(reopened, _readCts.Token);
@@ -1196,7 +1499,35 @@ namespace LGSTrayHID
 
         private void ReopenLongEndpoint(string reason)
         {
-            if (_longEndpoint == null)
+            lock (_reopenSync)
+            {
+                ReopenLongEndpointCore(reason);
+            }
+        }
+
+        private void ReopenLongEndpointCore(string reason)
+        {
+            if (_longEndpoint == null || Disposed)
+            {
+                return;
+            }
+
+            HidDevicePtr previous;
+            lock (_handleSync)
+            {
+                previous = _devLong;
+                _devLong = IntPtr.Zero;
+            }
+
+            MarkExpectedClose(previous);
+            CloseEndpoint(previous);
+            if (!JoinReader(previous))
+            {
+                AddFailure("reopenLongReaderStopTimeout");
+                return;
+            }
+
+            if (Disposed)
             {
                 return;
             }
@@ -1208,16 +1539,10 @@ namespace LGSTrayHID
                 return;
             }
 
-            HidDevicePtr previous;
             lock (_handleSync)
             {
-                previous = _devLong;
                 _devLong = reopened;
             }
-
-            MarkExpectedClose(previous);
-            CloseEndpoint(previous);
-
             if (_readCts != null)
             {
                 StartReadThread(reopened, _readCts.Token);
@@ -1226,50 +1551,57 @@ namespace LGSTrayHID
             NativeDiagnosticsStore.AddEvent($"{NativeDiagnosticsStore.FormatHex(_shortEndpoint.ProductId, 4)}: reopened long endpoint after {reason}");
         }
 
-        private void CloseEndpoint(HidDevicePtr dev)
+        private static void CloseEndpoint(HidDevicePtr dev)
         {
-            nint raw = dev;
-            if (raw == IntPtr.Zero)
+            dev.Dispose();
+        }
+
+        private bool JoinReader(HidDevicePtr dev)
+        {
+            if (dev.SafeHandle == null)
             {
-                return;
+                return true;
             }
 
-            lock (_handleSync)
+            Thread? reader;
+            lock (_taskSync)
             {
-                if (!_closedHandles.Add(raw))
-                {
-                    return;
-                }
+                _readerThreads.TryGetValue(dev.SafeHandle, out reader);
             }
 
-            HidClose(raw);
+            if (reader is { IsAlive: true } && !reader.Join(THREAD_JOIN_TIMEOUT_MS))
+            {
+                NativeDiagnosticsStore.RecordError($"HID reader did not stop before endpoint reopen after {THREAD_JOIN_TIMEOUT_MS}ms.");
+                return false;
+            }
+
+            _ = ConsumeExpectedClose(dev);
+            return true;
         }
 
         private void MarkExpectedClose(HidDevicePtr dev)
         {
-            nint raw = dev;
-            if (raw == IntPtr.Zero)
+            if (dev.SafeHandle == null)
             {
                 return;
             }
 
             lock (_handleSync)
             {
-                _expectedClosedHandles.Add(raw);
+                _expectedClosedHandles.Add(dev.SafeHandle);
             }
         }
 
         private bool ConsumeExpectedClose(HidDevicePtr dev)
         {
-            nint raw = dev;
-            if (raw == IntPtr.Zero)
+            if (dev.SafeHandle == null)
             {
                 return false;
             }
 
             lock (_handleSync)
             {
-                return _expectedClosedHandles.Remove(raw);
+                return _expectedClosedHandles.Remove(dev.SafeHandle);
             }
         }
 

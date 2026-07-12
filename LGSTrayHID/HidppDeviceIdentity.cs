@@ -20,7 +20,8 @@ internal sealed class HidppDeviceIdentity
         ushort productId,
         byte deviceIdx,
         int interfaceNumber,
-        string endpointIdentityKey,
+        string receiverStableId,
+        string persistentEndpointAlias,
         byte[]? deviceInfoRawResponse,
         byte[]? deviceInfoParams,
         byte[]? serialRawResponse,
@@ -41,60 +42,68 @@ internal sealed class HidppDeviceIdentity
         string? serialNumber = serialParams == null ? null : FormatHex(serialParams);
         if (IsMeaningfulHex(serialNumber))
         {
-            return new HidppDeviceIdentity
-            {
-                Identifier = serialNumber!,
-                Source = "deviceInfoSerial",
-                UnitId = unitId,
-                ModelId = modelId,
-                SerialNumberSupported = serialNumberSupported,
-                SerialNumber = serialNumber,
-                DeviceInfoRawResponse = FormatBytes(deviceInfoRawResponse),
-                SerialRawResponse = FormatBytes(serialRawResponse),
-            };
+            return Create(
+                serialNumber!,
+                "deviceInfoSerial",
+                unitId,
+                modelId,
+                serialNumberSupported,
+                serialNumber,
+                deviceInfoRawResponse,
+                serialRawResponse,
+                null
+            );
         }
 
         if (IsMeaningfulHex(unitId))
         {
-            return new HidppDeviceIdentity
-            {
-                Identifier = IsMeaningfulHex(modelId) ? $"{unitId}-{modelId}" : unitId!,
-                Source = "deviceInfoUnitId",
-                UnitId = unitId,
-                ModelId = modelId,
-                SerialNumberSupported = serialNumberSupported,
-                SerialNumber = IsMeaningfulHex(serialNumber) ? serialNumber : null,
-                DeviceInfoRawResponse = FormatBytes(deviceInfoRawResponse),
-                SerialRawResponse = FormatBytes(serialRawResponse),
-                FallbackReason = serialNumberSupported && !IsMeaningfulHex(serialNumber) ? "invalidSerialResponse" : null,
-            };
+            return Create(
+                IsMeaningfulHex(modelId) ? $"{unitId}-{modelId}" : unitId!,
+                "deviceInfoUnitId",
+                unitId,
+                modelId,
+                serialNumberSupported,
+                IsMeaningfulHex(serialNumber) ? serialNumber : null,
+                deviceInfoRawResponse,
+                serialRawResponse,
+                serialNumberSupported && !IsMeaningfulHex(serialNumber) ? "invalidSerialResponse" : null
+            );
         }
 
-        if (IsMeaningfulHex(modelId))
+        if (!string.IsNullOrWhiteSpace(receiverStableId))
         {
-            return new HidppDeviceIdentity
-            {
-                Identifier = $"{productId:X4}-{modelId}",
-                Source = "deviceInfoModelId",
-                UnitId = unitId,
-                ModelId = modelId,
-                SerialNumberSupported = serialNumberSupported,
-                SerialNumber = IsMeaningfulHex(serialNumber) ? serialNumber : null,
-                DeviceInfoRawResponse = FormatBytes(deviceInfoRawResponse),
-                SerialRawResponse = FormatBytes(serialRawResponse),
-                FallbackReason = "unitIdMissing",
-            };
+            string pairingKey = string.Join('|',
+                "receiver-slot",
+                receiverStableId,
+                productId.ToString("X4"),
+                deviceIdx.ToString("X2"),
+                interfaceNumber.ToString(),
+                IsMeaningfulHex(modelId) ? modelId : string.Empty
+            );
+            return Create(
+                PersistentDeviceIdentityStore.GetOrCreate(pairingKey),
+                "receiverPairingSlot",
+                unitId,
+                modelId,
+                serialNumberSupported,
+                IsMeaningfulHex(serialNumber) ? serialNumber : null,
+                deviceInfoRawResponse,
+                serialRawResponse,
+                IsMeaningfulHex(modelId) ? "unitIdMissing" : "deviceInformationIncomplete"
+            );
         }
 
-        return CreateFallback(
+        return CreatePersistentFallback(
             deviceName,
             productId,
             deviceIdx,
             interfaceNumber,
-            endpointIdentityKey,
+            persistentEndpointAlias,
+            modelId,
+            serialNumberSupported,
             deviceInfoRawResponse,
             serialRawResponse,
-            "deviceInfoMissingOrInvalid"
+            IsMeaningfulHex(modelId) ? "receiverIdentityMissing" : "deviceInfoMissingOrInvalid"
         );
     }
 
@@ -103,27 +112,41 @@ internal sealed class HidppDeviceIdentity
         ushort productId,
         byte deviceIdx,
         int interfaceNumber,
-        string endpointIdentityKey,
+        string receiverStableId,
+        string persistentEndpointAlias,
         byte[]? deviceInfoRawResponse,
         byte[]? serialRawResponse,
         string reason
     )
     {
-        return new HidppDeviceIdentity
+        if (!string.IsNullOrWhiteSpace(receiverStableId))
         {
-            Identifier = CreateStableFallbackIdentifier(
-                $"fallback-{productId:X4}-{deviceIdx:X2}",
-                productId.ToString("X4"),
-                deviceIdx.ToString("X2"),
-                interfaceNumber.ToString(),
-                deviceName,
-                endpointIdentityKey
-            ),
-            Source = "fallbackStableHash",
-            DeviceInfoRawResponse = FormatBytes(deviceInfoRawResponse),
-            SerialRawResponse = FormatBytes(serialRawResponse),
-            FallbackReason = reason,
-        };
+            string pairingKey = $"receiver-slot|{receiverStableId}|{productId:X4}|{deviceIdx:X2}|{interfaceNumber}";
+            return Create(
+                PersistentDeviceIdentityStore.GetOrCreate(pairingKey),
+                "receiverPairingSlot",
+                null,
+                null,
+                false,
+                null,
+                deviceInfoRawResponse,
+                serialRawResponse,
+                reason
+            );
+        }
+
+        return CreatePersistentFallback(
+            deviceName,
+            productId,
+            deviceIdx,
+            interfaceNumber,
+            persistentEndpointAlias,
+            null,
+            false,
+            deviceInfoRawResponse,
+            serialRawResponse,
+            reason
+        );
     }
 
     public DeviceIdentityDiagnostic ToDiagnostic()
@@ -149,16 +172,77 @@ internal sealed class HidppDeviceIdentity
         }
 
         string normalized = identifier.Trim().Replace("-", string.Empty, StringComparison.Ordinal);
-        return normalized.Length > 0
-            && normalized.Any(x => x != '0')
-            && normalized.Any(x => x != 'F' && x != 'f');
+        return normalized.Length > 0 &&
+               normalized.Any(character => character != '0') &&
+               normalized.Any(character => character != 'F' && character != 'f');
     }
 
     internal static string CreateStableFallbackIdentifier(string prefix, params string?[] stableParts)
     {
-        string source = string.Join("|", stableParts.Select(x => x ?? string.Empty));
+        string source = string.Join("|", stableParts.Select(part => part ?? string.Empty));
         byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(source));
         return $"{prefix}-{Convert.ToHexString(hash[..6])}";
+    }
+
+    private static HidppDeviceIdentity CreatePersistentFallback(
+        string deviceName,
+        ushort productId,
+        byte deviceIdx,
+        int interfaceNumber,
+        string persistentEndpointAlias,
+        string? modelId,
+        bool serialNumberSupported,
+        byte[]? deviceInfoRawResponse,
+        byte[]? serialRawResponse,
+        string reason
+    )
+    {
+        string aliasKey = string.Join('|',
+            "endpoint-mapping",
+            persistentEndpointAlias,
+            productId.ToString("X4"),
+            deviceIdx.ToString("X2"),
+            interfaceNumber.ToString(),
+            deviceName,
+            IsMeaningfulHex(modelId) ? modelId : string.Empty
+        );
+        return Create(
+            PersistentDeviceIdentityStore.GetOrCreate(aliasKey),
+            "persistentEndpointMapping",
+            null,
+            modelId,
+            serialNumberSupported,
+            null,
+            deviceInfoRawResponse,
+            serialRawResponse,
+            reason
+        );
+    }
+
+    private static HidppDeviceIdentity Create(
+        string identifier,
+        string source,
+        string? unitId,
+        string? modelId,
+        bool serialNumberSupported,
+        string? serialNumber,
+        byte[]? deviceInfoRawResponse,
+        byte[]? serialRawResponse,
+        string? fallbackReason
+    )
+    {
+        return new HidppDeviceIdentity
+        {
+            Identifier = identifier,
+            Source = source,
+            UnitId = unitId,
+            ModelId = modelId,
+            SerialNumberSupported = serialNumberSupported,
+            SerialNumber = serialNumber,
+            DeviceInfoRawResponse = FormatBytes(deviceInfoRawResponse),
+            SerialRawResponse = FormatBytes(serialRawResponse),
+            FallbackReason = fallbackReason,
+        };
     }
 
     private static bool IsMeaningfulHex(string? value)
@@ -169,9 +253,9 @@ internal sealed class HidppDeviceIdentity
         }
 
         string normalized = value.Replace("-", string.Empty, StringComparison.Ordinal);
-        return normalized.Length > 0
-            && normalized.Any(x => x != '0')
-            && normalized.Any(x => x != 'F' && x != 'f');
+        return normalized.Length > 0 &&
+               normalized.Any(character => character != '0') &&
+               normalized.Any(character => character != 'F' && character != 'f');
     }
 
     private static string FormatHex(ReadOnlySpan<byte> bytes) => Convert.ToHexString(bytes);

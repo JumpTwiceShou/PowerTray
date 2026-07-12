@@ -25,7 +25,10 @@ namespace LGSTrayHID
         private BatteryUpdateReturn lastBatteryReturn;
         private DateTimeOffset lastUpdate = DateTimeOffset.MinValue;
         private bool _offlineSignalled;
+        private int _consecutiveFailures;
         private HidppDeviceIdentity? _identity;
+
+        internal bool IsOffline => _offlineSignalled;
 
         private readonly HidppDevices _parent;
         public HidppDevices Parent => _parent;
@@ -115,22 +118,27 @@ namespace LGSTrayHID
                 if (!HasParams(ret, 1)) { return; }
                 int nameLength = ret.GetParam(0);
 
-                string name = "";
+                List<byte> nameBytes = new(nameLength);
 
-                while (name.Length < nameLength)
+                while (nameBytes.Count < nameLength)
                 {
-                    ret = await _parent.WriteRead20(_parent.DevShort, new byte[7] { 0x10, _deviceIdx, featureId, 0x10 | SW_ID, (byte)name.Length, 0x00, 0x00 });
+                    ret = await _parent.WriteRead20(_parent.DevShort, new byte[7] { 0x10, _deviceIdx, featureId, 0x10 | SW_ID, (byte)nameBytes.Count, 0x00, 0x00 });
                     if (!HasParams(ret, 1)) { return; }
 
-                    int bytesToRead = Math.Min(nameLength - name.Length, ret.GetParams().Length);
-                    name += Encoding.UTF8.GetString(ret.GetParams()[..bytesToRead]);
+                    byte[] parameters = ret.GetParams().ToArray();
+                    int bytesToRead = Math.Min(nameLength - nameBytes.Count, parameters.Length);
+                    if (bytesToRead <= 0)
+                    {
+                        return;
+                    }
+                    nameBytes.AddRange(parameters[..bytesToRead].ToArray());
                 }
 
-                DeviceName = name.TrimEnd('\0');
+                DeviceName = Encoding.UTF8.GetString([.. nameBytes]).TrimEnd('\0');
 
                 foreach (var tag in GlobalSettings.settings.DisabledDevices)
                 {
-                    if (DeviceName.Contains(tag))
+                    if (DeviceName.Contains(tag, StringComparison.OrdinalIgnoreCase))
                     {
                         Log.WriteLine($"{DeviceName} is marked as disabled");
                         return;
@@ -181,7 +189,8 @@ namespace LGSTrayHID
                     _parent.ProductId,
                     _deviceIdx,
                     _parent.InterfaceNumber,
-                    _parent.EndpointIdentityKey,
+                    _parent.ReceiverStableId,
+                    _parent.PersistentEndpointAlias,
                     deviceInfoRawResponse,
                     deviceInfoParams,
                     serialRawResponse,
@@ -196,7 +205,8 @@ namespace LGSTrayHID
                     _parent.ProductId,
                     _deviceIdx,
                     _parent.InterfaceNumber,
-                    _parent.EndpointIdentityKey,
+                    _parent.ReceiverStableId,
+                    _parent.PersistentEndpointAlias,
                     null,
                     null,
                     "deviceInformationFeatureMissing"
@@ -249,7 +259,12 @@ namespace LGSTrayHID
             BatteryUpdateReturn? initialBattery = null;
             if (_getBatteryAsync != null)
             {
-                initialBattery = await ReadBatteryAsync();
+                BatteryUpdateReturn? rawInitialBattery = await ReadBatteryAsync();
+                if (rawInitialBattery.HasValue && TryValidateBattery(rawInitialBattery.Value, out BatteryUpdateReturn validatedInitialBattery))
+                {
+                    initialBattery = validatedInitialBattery;
+                    ResetTransportFailures();
+                }
                 if (initialBattery == null)
                 {
                     _parent.RecordDeviceDiscovery(
@@ -282,7 +297,7 @@ namespace LGSTrayHID
 
             bool delayFirstBatteryRetry = _getBatteryAsync != null && !initialBattery.HasValue;
 
-            _ = Task.Run(async () =>
+            Task pollTask = Task.Run(async () =>
             {
                 CancellationToken cancellationToken = Parent.LifetimeToken;
                 try
@@ -314,7 +329,12 @@ namespace LGSTrayHID
                 catch (OperationCanceledException)
                 {
                 }
+                catch (Exception ex)
+                {
+                    NativeDiagnosticsStore.RecordError($"Battery poll failed for {NativeDiagnosticsStore.HashForDiagnostics(Identifier)}: {ex.GetType().Name}: {ex.Message}");
+                }
             }, Parent.LifetimeToken);
+            Parent.TrackBackgroundTask(pollTask);
         }
 
         public async Task UpdateBattery(bool forceIpcUpdate = false)
@@ -322,21 +342,21 @@ namespace LGSTrayHID
             if (Parent.Disposed) { return; }
             if (_getBatteryAsync == null) { return; }
 
-            if (!await Parent.Ping20(_deviceIdx, 150, false))
+            if (!await Parent.Ping20(_deviceIdx, 250, false))
             {
-                SignalOffline();
+                RegisterTransportFailure("pingFailed");
                 return;
             }
 
-            var ret = await ReadBatteryAsync();
-
-            if (ret == null)
+            BatteryUpdateReturn? ret = await ReadBatteryAsync();
+            if (!ret.HasValue || !TryValidateBattery(ret.Value, out BatteryUpdateReturn validated))
             {
-                SignalOffline();
+                RegisterTransportFailure(ret.HasValue ? "invalidBatteryPayload" : "batteryUnavailable");
                 return;
             }
 
-            SignalBatteryUpdate(ret.Value, forceIpcUpdate);
+            ResetTransportFailures();
+            SignalBatteryUpdate(validated, forceIpcUpdate);
         }
 
         private async Task<BatteryUpdateReturn?> ReadBatteryAsync()
@@ -358,14 +378,43 @@ namespace LGSTrayHID
 
         private static byte[] ToBytes(Hidpp20 message) => message.Length == 0 ? [] : (byte[])message;
 
+        internal async Task<bool> ProbePresenceAsync(bool forcePublish = false)
+        {
+            if (Parent.Disposed || string.IsNullOrWhiteSpace(Identifier))
+            {
+                return false;
+            }
+
+            if (!await Parent.Ping20(_deviceIdx, 250, false))
+            {
+                RegisterTransportFailure("presencePingFailed");
+                return false;
+            }
+
+            bool wasOffline = _offlineSignalled;
+            ResetTransportFailures();
+            if (wasOffline || forcePublish)
+            {
+                SignalOnline();
+                BatteryUpdateReturn? battery = await ReadBatteryAsync();
+                if (battery.HasValue && TryValidateBattery(battery.Value, out BatteryUpdateReturn validated))
+                {
+                    SignalBatteryUpdate(validated, true);
+                }
+            }
+
+            return true;
+        }
+
         private void SignalBatteryUpdate(BatteryUpdateReturn batStatus, bool forceIpcUpdate)
         {
+            bool wasOffline = _offlineSignalled;
             lastUpdate = DateTimeOffset.Now;
             _offlineSignalled = false;
+            _consecutiveFailures = 0;
 
-            if (!forceIpcUpdate && batStatus == lastBatteryReturn)
+            if (!DeviceTransportPolicy.ShouldPublishUpdate(forceIpcUpdate, wasOffline, batStatus, lastBatteryReturn))
             {
-                // Don't report if no change
                 return;
             }
 
@@ -384,10 +433,48 @@ namespace LGSTrayHID
             }
 
             _offlineSignalled = false;
+            _consecutiveFailures = 0;
             HidppManagerContext.Instance.SignalDeviceEvent(
                 IPCMessageType.INIT,
                 new InitMessage(Identifier, DeviceName, _getBatteryAsync != null, (DeviceType)DeviceType)
             );
+        }
+
+        private void RegisterTransportFailure(string reason)
+        {
+            int failures = Interlocked.Increment(ref _consecutiveFailures);
+            NativeDiagnosticsStore.AddEvent($"Transport degraded for {NativeDiagnosticsStore.HashForDiagnostics(Identifier)}: {reason} ({failures}/{GlobalSettings.settings.ConsecutiveFailureThreshold})");
+            if (DeviceTransportPolicy.ShouldSignalOffline(failures, GlobalSettings.settings.ConsecutiveFailureThreshold))
+            {
+                NativeDiagnosticsStore.RecordError($"Device transport offline after {failures} failures: {reason}");
+                SignalOffline();
+                if (failures == GlobalSettings.settings.ConsecutiveFailureThreshold)
+                {
+                    Parent.RecoverTransport(reason);
+                }
+            }
+        }
+
+        private void ResetTransportFailures()
+        {
+            Interlocked.Exchange(ref _consecutiveFailures, 0);
+            NativeDiagnosticsStore.RecordCommandSuccess();
+        }
+
+        private static bool TryValidateBattery(BatteryUpdateReturn value, out BatteryUpdateReturn validated)
+        {
+            validated = default;
+            if (!double.IsFinite(value.batteryPercentage) || value.batteryPercentage < 0 || value.batteryPercentage > 100)
+            {
+                return false;
+            }
+
+            validated = new BatteryUpdateReturn(
+                Math.Clamp(value.batteryPercentage, 0, 100),
+                value.status,
+                value.batteryMVolt
+            );
+            return true;
         }
 
         internal void SignalOffline()

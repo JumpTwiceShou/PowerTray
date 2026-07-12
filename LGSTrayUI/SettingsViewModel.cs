@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
@@ -21,6 +22,8 @@ using Microsoft.Win32;
 using Microsoft.Extensions.Options;
 using LGSTrayPrimitives;
 using LGSTrayPrimitives.MessageStructs;
+using LGSTrayCore.Managers;
+using LGSTrayCore.HttpServer;
 
 namespace LGSTrayUI;
 
@@ -33,6 +36,8 @@ public sealed partial class SettingsViewModel : ObservableObject
     private readonly SystemStateService _systemState;
     private readonly UpdateService _updateService;
     private readonly NativeDiagnosticsClient _nativeDiagnosticsClient;
+    private readonly NativeBackendStatus _nativeBackendStatus;
+    private readonly HttpServerStatus _httpServerStatus;
     private readonly AppSettings _appSettings;
     private double _uiScaleValue;
     private int _defaultThresholdDraft;
@@ -77,6 +82,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         SystemStateService systemState,
         UpdateService updateService,
         NativeDiagnosticsClient nativeDiagnosticsClient,
+        NativeBackendStatus nativeBackendStatus,
+        HttpServerStatus httpServerStatus,
         IOptions<AppSettings> appSettings
     )
     {
@@ -87,6 +94,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         _systemState = systemState;
         _updateService = updateService;
         _nativeDiagnosticsClient = nativeDiagnosticsClient;
+        _nativeBackendStatus = nativeBackendStatus;
+        _httpServerStatus = httpServerStatus;
         _appSettings = appSettings.Value;
         Loc = loc;
         _uiScaleValue = CurrentUiScaleOption.Index;
@@ -97,7 +106,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         _settings.PropertyChanged += OnSettingsPropertyChanged;
         Loc.PropertyChanged += (_, _) => RefreshBindings();
         RefreshDeviceItems();
-        _ = RefreshDiagnosticsAsync();
+        ObserveTask(RefreshDiagnosticsAsync(), "initial diagnostics refresh");
     }
 
     public string Language
@@ -359,6 +368,17 @@ public sealed partial class SettingsViewModel : ObservableObject
         _alertManager.StopBlinking();
     }
 
+    private static void ObserveTask(Task task, string context)
+    {
+        _ = task.ContinueWith(completed =>
+        {
+            if (completed.IsFaulted && completed.Exception != null)
+            {
+                Debug.WriteLine($"Settings {context} failed: {completed.Exception.GetBaseException()}");
+            }
+        }, TaskScheduler.Default);
+    }
+
     private void OnDevicesChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
         RefreshDeviceItems();
@@ -526,7 +546,7 @@ public sealed partial class SettingsViewModel : ObservableObject
 
         JsonObject root = new()
         {
-            ["schemaVersion"] = 1,
+            ["schemaVersion"] = 2,
             ["generatedAt"] = DateTimeOffset.Now.ToString("o"),
             ["appVersion"] = CurrentVersion,
             ["system"] = BuildSystemJson(),
@@ -536,6 +556,8 @@ public sealed partial class SettingsViewModel : ObservableObject
             ["nativeDiscovery"] = CloneOrEmptyArray(nativeNode?["nativeDiscovery"]),
             ["recognizedDevices"] = BuildRecognizedDevicesJson(),
             ["recentEvents"] = CloneOrEmptyArray(nativeNode?["recentEvents"]),
+            ["nativeBackend"] = BuildNativeBackendJson(),
+            ["httpServer"] = BuildHttpServerJson(),
         };
 
         if (!string.IsNullOrWhiteSpace(nativeError))
@@ -558,6 +580,34 @@ public sealed partial class SettingsViewModel : ObservableObject
             ["currentLanguage"] = Language,
             ["gHubRunning"] = _lastGHubRunning,
             ["port9010Reachable"] = _lastPort9010Reachable,
+        };
+    }
+
+    private JsonObject BuildNativeBackendJson()
+    {
+        NativeBackendStatusSnapshot status = _nativeBackendStatus.Snapshot;
+        return new JsonObject
+        {
+            ["state"] = status.State,
+            ["helperProcessId"] = status.HelperProcessId,
+            ["helperStartedAt"] = status.HelperStartedAt?.ToString("o"),
+            ["lastHeartbeatAt"] = status.LastHeartbeatAt?.ToString("o"),
+            ["lastSuccessfulCommandAt"] = status.LastSuccessfulCommandAt?.ToString("o"),
+            ["lastError"] = status.LastError,
+            ["restartCount"] = status.RestartCount,
+        };
+    }
+
+    private JsonObject BuildHttpServerJson()
+    {
+        HttpServerStatusSnapshot status = _httpServerStatus.Snapshot;
+        return new JsonObject
+        {
+            ["state"] = status.State,
+            ["startedAt"] = status.StartedAt?.ToString("o"),
+            ["lastError"] = status.LastError,
+            ["restartCount"] = status.RestartCount,
+            ["remoteBinding"] = _appSettings.HTTPServer.RequiresAuthentication,
         };
     }
 
@@ -680,7 +730,7 @@ PowerTray 诊断包
 
 重要字段：
 - hidEnumeration：Windows 当前可见的所有 Logitech HID 端点。
-- unsupportedHidDevices：未探测、无法打开或非 Logitech 的 HID 背景端点。
+- unsupportedHidDevices：无法识别或无法打开的 Logitech HID 端点；不会列出其他厂商设备。
 - nativeDiscovery：PowerTrayHID 在发现设备时尝试过的路径。
 - nativeDiscovery[].failureReasons：设备或 session 被跳过的原因。
 - nativeDiscovery[].devices[].identity：0x0003 identity 的 unit id、model id、serial 和原始响应哈希，以及最终 identifier 来源。
@@ -702,7 +752,7 @@ PowerTray 診断パッケージ
 
 主なフィールド:
 - hidEnumeration: Windows から見えている Logitech HID エンドポイント。
-- unsupportedHidDevices: 未調査、開けなかった、または Logitech 以外の HID エンドポイント。
+- unsupportedHidDevices: 認識できなかった、または開けなかった Logitech HID エンドポイント。他社製デバイスは含みません。
 - nativeDiscovery: PowerTrayHID が検出時に試した経路。
 - nativeDiscovery[].failureReasons: デバイスまたは session がスキップされた理由。
 - nativeDiscovery[].devices[].identity: 0x0003 identity の unit id、model id、serial、元応答のハッシュと最終 identifier の由来。
@@ -723,8 +773,7 @@ and battery probe results are kept because they are needed to add device support
 
 Important fields:
 - hidEnumeration: all Logitech HID endpoints visible to Windows.
-- unsupportedHidDevices: non-Logitech HID background endpoints and Logitech
-  endpoints that were not probed or could not be opened.
+- unsupportedHidDevices: Logitech HID endpoints that were not recognized or could not be opened. Other vendors are excluded.
 - nativeDiscovery: what PowerTrayHID tried during discovery.
 - nativeDiscovery[].failureReasons: why a device/session was skipped.
 - nativeDiscovery[].devices[].identity: unit id, model id, serial, and raw

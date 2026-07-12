@@ -8,34 +8,47 @@ public static class CenturionFrameCodec
 
     public static byte[] BuildFrame(byte reportId, byte? deviceAddress, ReadOnlySpan<byte> payload)
     {
-        if (reportId is not ReportId and not AddressedReportId)
+        ValidateReportId(reportId);
+        int payloadOffset = reportId == AddressedReportId ? 4 : 3;
+        int maximumPayloadLength = FrameSize - payloadOffset;
+        if (payload.Length <= 0 || payload.Length > maximumPayloadLength)
         {
-            throw new ArgumentOutOfRangeException(nameof(reportId), reportId, "Unsupported Centurion report id.");
+            throw new ArgumentOutOfRangeException(
+                nameof(payload),
+                payload.Length,
+                $"Centurion payload must contain 1-{maximumPayloadLength} bytes for report 0x{reportId:X2}."
+            );
         }
 
-        byte cplLength = checked((byte)(payload.Length + 1));
         byte[] frame = new byte[FrameSize];
         frame[0] = reportId;
-        int payloadOffset;
+        byte cplLength = checked((byte)(payload.Length + 1));
         if (reportId == AddressedReportId)
         {
-            frame[1] = deviceAddress ?? 0x00;
+            frame[1] = deviceAddress ?? throw new ArgumentNullException(nameof(deviceAddress));
             frame[2] = cplLength;
             frame[3] = 0x00;
-            payloadOffset = 4;
         }
         else
         {
+            if (deviceAddress.HasValue)
+            {
+                throw new ArgumentException("A device address is only valid for addressed Centurion reports.", nameof(deviceAddress));
+            }
             frame[1] = cplLength;
             frame[2] = 0x00;
-            payloadOffset = 3;
         }
 
-        payload[..Math.Min(payload.Length, frame.Length - payloadOffset)].CopyTo(frame.AsSpan(payloadOffset));
+        payload.CopyTo(frame.AsSpan(payloadOffset, payload.Length));
         return frame;
     }
 
-    public static bool TryExtractPayload(ReadOnlySpan<byte> frame, out byte reportId, out byte? deviceAddress, out byte[] payload)
+    public static bool TryExtractPayload(
+        ReadOnlySpan<byte> frame,
+        out byte reportId,
+        out byte? deviceAddress,
+        out byte[] payload
+    )
     {
         reportId = 0;
         deviceAddress = null;
@@ -47,32 +60,43 @@ public static class CenturionFrameCodec
         }
 
         reportId = frame[0];
-        int cplLength;
         int payloadOffset;
+        int cplLength;
         if (reportId == AddressedReportId)
         {
             deviceAddress = frame[1];
             cplLength = frame[2];
             payloadOffset = 4;
+            if (frame[3] != 0x00)
+            {
+                return false;
+            }
         }
         else
         {
             cplLength = frame[1];
             payloadOffset = 3;
+            if (frame[2] != 0x00)
+            {
+                return false;
+            }
         }
 
-        if (cplLength < 1)
+        int payloadLength = cplLength - 1;
+        if (cplLength < 2 || payloadLength > FrameSize - payloadOffset || payloadLength > frame.Length - payloadOffset)
         {
             return false;
         }
 
-        int payloadLength = Math.Min(cplLength - 1, frame.Length - payloadOffset);
-        if (payloadLength <= 0)
-        {
-            return false;
-        }
-
-        payload = frame[payloadOffset..(payloadOffset + payloadLength)].ToArray();
+        payload = frame.Slice(payloadOffset, payloadLength).ToArray();
         return true;
+    }
+
+    private static void ValidateReportId(byte reportId)
+    {
+        if (reportId is not ReportId and not AddressedReportId)
+        {
+            throw new ArgumentOutOfRangeException(nameof(reportId), reportId, "Unsupported Centurion report id.");
+        }
     }
 }

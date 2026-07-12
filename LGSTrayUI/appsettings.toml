@@ -7,18 +7,28 @@ addr = "localhost"
 port = 12321
 useIpv6 = true
 
+# Remote HTTP is disabled unless allowRemote is true and accessToken contains at least 32 characters.
+allowRemote = false
+accessToken = ""
+
 [GHub]
 enabled = false
 
 [Native]
 enabled = true
 
-# Time in seconds to retry a device poll on failure
+# Time in seconds to retry a device poll after a failed attempt.
 retryTime = 10
 
-# Time in seconds until the next device poll on success
+# Time in seconds until the next full battery poll after success.
 pollPeriod = 600
 
-# List of disabled devices
+# Time in seconds between lightweight presence checks. This does not rebuild HID sessions.
+presencePeriod = 60
+
+# Consecutive transport failures required before a device is reported offline.
+consecutiveFailureThreshold = 3
+
+# Case-insensitive list of disabled device-name fragments. Empty entries are ignored.
 disabledDevices = [
 ]

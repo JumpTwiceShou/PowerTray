@@ -3,6 +3,7 @@ using Hardcodet.Wpf.TaskbarNotification;
 using LGSTrayCore;
 using LGSTrayPrimitives.MessageStructs;
 using System;
+using System.ComponentModel;
 using System.Globalization;
 
 namespace LGSTrayUI
@@ -29,11 +30,13 @@ namespace LGSTrayUI
         }
     }
 
-    public partial class LogiDeviceViewModel : LogiDevice
+    public partial class LogiDeviceViewModel : LogiDevice, IDisposable
     {
         private readonly LogiDeviceIconFactory _logiDeviceIconFactory;
         private readonly UserSettingsWrapper _userSettings;
         private readonly LocalizationService _loc;
+        private readonly PropertyChangedEventHandler _localizationChangedHandler;
+        private bool _disposed;
 
         [ObservableProperty]
         private bool _isChecked = false;
@@ -41,7 +44,6 @@ namespace LGSTrayUI
         [ObservableProperty]
         private bool _isOnline = true;
 
-        public long LastPresenceEpoch { get; private set; } = -1;
         public DateTimeOffset LastSeenUtc { get; private set; } = DateTimeOffset.MinValue;
 
         private LogiDeviceIcon? taskbarIcon;
@@ -69,8 +71,9 @@ namespace LGSTrayUI
             _logiDeviceIconFactory = logiDeviceIconFactory;
             _userSettings = userSettings;
             _loc = loc;
+            _localizationChangedHandler = (_, _) => RefreshDisplayProperties();
             _userSettings.DeviceSettingsChanged += OnDeviceSettingsChanged;
-            _loc.PropertyChanged += (_, _) => RefreshDisplayProperties();
+            _loc.PropertyChanged += _localizationChangedHandler;
         }
 
         private string BatteryVoltageText() => BatteryVoltage > 0 ? $", {BatteryVoltage:0.00} V" : string.Empty;
@@ -145,9 +148,8 @@ namespace LGSTrayUI
             OnPropertyChanged(nameof(DisplayToolTipString));
         }
 
-        public void MarkPresence(long epoch)
+        public void MarkPresence()
         {
-            LastPresenceEpoch = epoch;
             LastSeenUtc = DateTimeOffset.UtcNow;
             IsOnline = true;
             OnPropertyChanged(nameof(LastSeenUtc));
@@ -176,12 +178,28 @@ namespace LGSTrayUI
 
         public void UpdateState(UpdateMessage updateMessage)
         {
-            BatteryPercentage = updateMessage.batteryPercentage;
+            BatteryPercentage = double.IsFinite(updateMessage.batteryPercentage)
+                ? Math.Clamp(updateMessage.batteryPercentage, 0, 100)
+                : -1;
             PowerSupplyStatus = updateMessage.powerSupplyStatus;
             BatteryVoltage = updateMessage.batteryMVolt / 1000.0;
             BatteryMileage = updateMessage.Mileage;
             LastUpdate = updateMessage.updateTime;
             OnPropertyChanged(nameof(DisplayToolTipString));
+        }
+
+        public void Dispose()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
+            _userSettings.DeviceSettingsChanged -= OnDeviceSettingsChanged;
+            _loc.PropertyChanged -= _localizationChangedHandler;
+            taskbarIcon?.Dispose();
+            taskbarIcon = null;
         }
     }
 }

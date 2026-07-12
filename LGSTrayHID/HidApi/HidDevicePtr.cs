@@ -1,71 +1,128 @@
-﻿#define PRINT
+#define PRINT
 using System.Threading.Channels;
 using static LGSTrayHID.HidApi.HidApi;
 
-namespace LGSTrayHID.HidApi
+namespace LGSTrayHID.HidApi;
+
+public readonly struct HidDevicePtr : IDisposable, IEquatable<HidDevicePtr>
 {
-    public readonly struct HidDevicePtr
+    private readonly SafeHidDeviceHandle? _handle;
+
+    private HidDevicePtr(SafeHidDeviceHandle handle)
     {
-        private readonly nint _ptr;
+        _handle = handle;
+    }
 
-        private HidDevicePtr(nint ptr)
+    internal SafeHidDeviceHandle? SafeHandle => _handle;
+    public bool IsInvalid => _handle == null || _handle.IsInvalid || _handle.IsClosed;
+
+    public static implicit operator nint(HidDevicePtr ptr) =>
+        ptr._handle == null || ptr._handle.IsClosed ? IntPtr.Zero : ptr._handle.DangerousGetHandle();
+
+    public static implicit operator HidDevicePtr(nint ptr) =>
+        ptr == IntPtr.Zero ? default : new HidDevicePtr(new SafeHidDeviceHandle(ptr));
+
+    public Task<int> WriteAsync(byte[] buffer)
+    {
+        if (_handle == null || _handle.IsInvalid || _handle.IsClosed)
         {
-            _ptr = ptr;
+            return Task.FromResult(-1);
         }
 
-        public static implicit operator nint(HidDevicePtr ptr) => ptr._ptr;
-
-        public static implicit operator HidDevicePtr(nint ptr) => new(ptr);
-
-        public Task<int> WriteAsync(byte[] buffer)
+        bool addedRef = false;
+        try
         {
+            _handle.DangerousAddRef(ref addedRef);
+            nint raw = _handle.DangerousGetHandle();
 #if DEBUG && PRINT
-            PrintBuffer($"0x{_ptr:X} - W", buffer);
+            PrintBuffer($"0x{raw:X} - W", buffer);
 #endif
-            var ret = HidWrite(this, buffer, (nuint)buffer.Length);
+            return Task.FromResult(HidWrite(raw, buffer, (nuint)buffer.Length));
+        }
+        catch (ObjectDisposedException)
+        {
+            return Task.FromResult(-1);
+        }
+        finally
+        {
+            if (addedRef)
+            {
+                _handle.DangerousRelease();
+            }
+        }
+    }
 
-            return Task.FromResult(ret);
+    public int Read(byte[] buffer, int count, int timeout)
+    {
+        if (_handle == null || _handle.IsInvalid || _handle.IsClosed)
+        {
+            return -1;
         }
 
-        public int Read(byte[] buffer, int count, int timeout)
+        bool addedRef = false;
+        try
         {
-            var ret = HidReadTimeOut(this, buffer, (nuint)count, timeout);
+            _handle.DangerousAddRef(ref addedRef);
+            nint raw = _handle.DangerousGetHandle();
+            int ret = HidReadTimeOut(raw, buffer, (nuint)count, timeout);
 #if DEBUG && PRINT
-            PrintBuffer($"0x{_ptr:X} - R", buffer, ret < 1);
+            PrintBuffer($"0x{raw:X} - R", buffer, ret < 1);
 #endif
             return ret;
         }
+        catch (ObjectDisposedException)
+        {
+            return -1;
+        }
+        finally
+        {
+            if (addedRef)
+            {
+                _handle.DangerousRelease();
+            }
+        }
+    }
+
+    public void Dispose()
+    {
+        _handle?.Dispose();
+    }
+
+    public bool Equals(HidDevicePtr other) => (nint)this == (nint)other;
+    public override bool Equals(object? obj) => obj is HidDevicePtr other && Equals(other);
+    public override int GetHashCode() => ((nint)this).GetHashCode();
+    public static bool operator ==(HidDevicePtr left, HidDevicePtr right) => left.Equals(right);
+    public static bool operator !=(HidDevicePtr left, HidDevicePtr right) => !left.Equals(right);
 
 #if DEBUG && PRINT
-        private static int count = 0;
-        private static readonly Channel<string> _channel = Channel.CreateUnbounded<string>();
+    private static int count;
+    private static readonly Channel<string> DebugChannel = Channel.CreateUnbounded<string>();
 
-        static HidDevicePtr()
+    static HidDevicePtr()
+    {
+        Thread thread = new(async () =>
         {
-            Thread t1 = new(async () =>
+            await foreach (string value in DebugChannel.Reader.ReadAllAsync())
             {
-                while (true)
-                {
-                    var str = await _channel.Reader.ReadAsync();
-                    Console.WriteLine(str);
-                }
-            });
-            t1.Start();
-        }
-
-        private static void PrintBuffer(string prefix, byte[] buffer, bool ignore = false)
-        {
-            if (ignore)
-            {
-                return;
+                Console.WriteLine(value);
             }
-
-            var arr = string.Join(" ", Array.ConvertAll(buffer, x => x.ToString("X02")));
-            var str = $"{count:d04} - {prefix}: {arr}";
-            _channel.Writer.TryWrite(str);
-
-            count++;
-        }
-#endif
+        })
+        {
+            IsBackground = true,
+            Name = "PowerTray HID debug output",
+        };
+        thread.Start();
     }
+
+    private static void PrintBuffer(string prefix, byte[] buffer, bool ignore = false)
+    {
+        if (ignore)
+        {
+            return;
+        }
+
+        string arr = string.Join(" ", Array.ConvertAll(buffer, x => x.ToString("X02")));
+        DebugChannel.Writer.TryWrite($"{Interlocked.Increment(ref count):d04} - {prefix}: {arr}");
+    }
+#endif
 }

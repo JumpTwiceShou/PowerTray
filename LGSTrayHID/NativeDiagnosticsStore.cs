@@ -8,8 +8,10 @@ namespace LGSTrayHID;
 
 internal sealed class NativeDiagnosticsSnapshot
 {
-    public int SchemaVersion { get; set; } = 1;
+    public int SchemaVersion { get; set; } = 2;
     public DateTimeOffset GeneratedAt { get; set; } = DateTimeOffset.Now;
+    public DateTimeOffset? LastSuccessfulCommandAt { get; set; }
+    public string? LastError { get; set; }
     public List<HidEndpointDiagnostic> HidEnumeration { get; set; } = [];
     public List<HidEndpointDiagnostic> UnsupportedHidDevices { get; set; } = [];
     public List<DiscoverySessionDiagnostic> NativeDiscovery { get; set; } = [];
@@ -28,10 +30,10 @@ internal sealed class HidEndpointDiagnostic
     public string UsagePage { get; set; } = string.Empty;
     public string Usage { get; set; } = string.Empty;
     public int InterfaceNumber { get; set; }
-    public string ContainerId { get; set; } = string.Empty;
+    public string ContainerIdHash { get; set; } = string.Empty;
     public string HidppMessageType { get; set; } = string.Empty;
     public string OpenStatus { get; set; } = string.Empty;
-    public string GroupKey { get; set; } = string.Empty;
+    public string GroupKeyHash { get; set; } = string.Empty;
 }
 
 internal sealed class DiscoverySessionDiagnostic
@@ -94,6 +96,30 @@ internal static class NativeDiagnosticsStore
     private static readonly object Sync = new();
     private static NativeDiagnosticsSnapshot Current = new();
     private static readonly Queue<NativeDiagnosticEvent> Events = new();
+    private static DateTimeOffset? _lastSuccessfulCommandAt;
+    private static string? _lastError;
+
+    public static DateTimeOffset LastSuccessfulCommandAt
+    {
+        get
+        {
+            lock (Sync)
+            {
+                return _lastSuccessfulCommandAt ?? DateTimeOffset.MinValue;
+            }
+        }
+    }
+
+    public static string? LastError
+    {
+        get
+        {
+            lock (Sync)
+            {
+                return _lastError;
+            }
+        }
+    }
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -114,10 +140,13 @@ internal static class NativeDiagnosticsStore
                     .Select(CreateEndpointDiagnostic)
                     .ToList(),
                 UnsupportedHidDevices = endpoints
-                    .Where(x => x.VendorId != 0x046D || x.MessageType == HidppMessageType.NONE || !x.OpenStatus.Equals("opened", StringComparison.OrdinalIgnoreCase))
+                    .Where(x => x.VendorId == 0x046D)
+                    .Where(x => x.MessageType == HidppMessageType.NONE || !x.OpenStatus.Equals("opened", StringComparison.OrdinalIgnoreCase))
                     .Select(CreateEndpointDiagnostic)
                     .ToList(),
                 RecentEvents = Events.ToList(),
+                LastSuccessfulCommandAt = _lastSuccessfulCommandAt,
+                LastError = _lastError,
             };
         }
 
@@ -142,6 +171,17 @@ internal static class NativeDiagnosticsStore
         return session;
     }
 
+    public static void ReattachSession(DiscoverySessionDiagnostic session)
+    {
+        lock (Sync)
+        {
+            if (!Current.NativeDiscovery.Contains(session))
+            {
+                Current.NativeDiscovery.Add(session);
+            }
+        }
+    }
+
     public static void UpdateSession(DiscoverySessionDiagnostic session, Action<DiscoverySessionDiagnostic> update)
     {
         lock (Sync)
@@ -149,6 +189,27 @@ internal static class NativeDiagnosticsStore
             update(session);
             Current.RecentEvents = Events.ToList();
         }
+    }
+
+    public static void RecordCommandSuccess()
+    {
+        lock (Sync)
+        {
+            _lastSuccessfulCommandAt = DateTimeOffset.UtcNow;
+            _lastError = null;
+            Current.LastSuccessfulCommandAt = _lastSuccessfulCommandAt;
+            Current.LastError = null;
+        }
+    }
+
+    public static void RecordError(string error)
+    {
+        lock (Sync)
+        {
+            _lastError = error;
+            Current.LastError = error;
+        }
+        AddEvent(error);
     }
 
     public static void AddEvent(string message)
@@ -170,6 +231,8 @@ internal static class NativeDiagnosticsStore
         lock (Sync)
         {
             Current.RecentEvents = Events.ToList();
+            Current.LastSuccessfulCommandAt = _lastSuccessfulCommandAt;
+            Current.LastError = _lastError;
             return JsonSerializer.Serialize(Current, JsonOptions);
         }
     }
@@ -226,10 +289,10 @@ internal static class NativeDiagnosticsStore
             UsagePage = FormatHex(endpoint.UsagePage, 4),
             Usage = FormatHex(endpoint.Usage, 4),
             InterfaceNumber = endpoint.InterfaceNumber,
-            ContainerId = endpoint.ContainerId == Guid.Empty ? string.Empty : endpoint.ContainerId.ToString("N"),
+            ContainerIdHash = endpoint.ContainerId == Guid.Empty ? string.Empty : HashForDiagnostics(endpoint.ContainerId.ToString("N")),
             HidppMessageType = endpoint.MessageType.ToString().ToLowerInvariant(),
             OpenStatus = endpoint.OpenStatus,
-            GroupKey = endpoint.GroupKey,
+            GroupKeyHash = HashForDiagnostics(endpoint.GroupKey),
         };
     }
 }

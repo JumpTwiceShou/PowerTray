@@ -2,9 +2,13 @@
 using CommunityToolkit.Mvvm.Input;
 using LGSTrayCore;
 using LGSTrayCore.Managers;
+using LGSTrayPrimitives;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
+using System.Diagnostics;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Reflection;
@@ -24,7 +28,12 @@ namespace LGSTrayUI
         private readonly UpdateService _updateService;
         private readonly LogiDeviceCollection _deviceCollection;
         private readonly SemaphoreSlim _rediscoverSemaphore = new(1, 1);
+        private readonly IHostApplicationLifetime _applicationLifetime;
+        private readonly TimeSpan _presencePeriod;
         private CancellationTokenSource? _presenceCts;
+        private Task? _presenceTask;
+        private Task? _updateTask;
+        private Task? _manualRediscoverTask;
         private LogiDeviceViewModel? _menuDevice;
 
         public LocalizationService Loc => _loc;
@@ -87,7 +96,9 @@ namespace LGSTrayUI
             LocalizationService loc,
             SettingsWindowFactory settingsWindowFactory,
             AlertManager alertManager,
-            UpdateService updateService
+            UpdateService updateService,
+            IHostApplicationLifetime applicationLifetime,
+            IOptions<AppSettings> appSettings
         )
         {
             _mainTaskbarIconWrapper = mainTaskbarIconWrapper;
@@ -101,15 +112,17 @@ namespace LGSTrayUI
             _settingsWindowFactory = settingsWindowFactory;
             _alertManager = alertManager;
             _updateService = updateService;
+            _applicationLifetime = applicationLifetime;
+            _presencePeriod = TimeSpan.FromSeconds(appSettings.Value.Native.PresencePeriod);
             _alertManager.SetDevices(_logiDevices);
             _userSettings.PropertyChanged += UserSettingsPropertyChanged;
             _userSettings.DeviceSettingsChanged += UserSettingsDeviceSettingsChanged;
         }
 
         [RelayCommand]
-        private static void ExitApplication()
+        private void ExitApplication()
         {
-            Environment.Exit(0);
+            _applicationLifetime.StopApplication();
         }
 
         [RelayCommand]
@@ -170,10 +183,23 @@ namespace LGSTrayUI
         [RelayCommand]
         private async Task RediscoverDevices()
         {
-            await RunPresenceCheckAsync(manual: true, CancellationToken.None);
+            CancellationToken cancellationToken = _presenceCts?.Token ?? CancellationToken.None;
+            Task rediscoverTask = RunPresenceCheckAsync(cancellationToken);
+            _manualRediscoverTask = rediscoverTask;
+            try
+            {
+                await rediscoverTask;
+            }
+            finally
+            {
+                if (ReferenceEquals(_manualRediscoverTask, rediscoverTask))
+                {
+                    _manualRediscoverTask = null;
+                }
+            }
         }
 
-        private async Task RunPresenceCheckAsync(bool manual, CancellationToken cancellationToken)
+        private async Task RunPresenceCheckAsync(CancellationToken cancellationToken)
         {
             if (!await _rediscoverSemaphore.WaitAsync(0, cancellationToken))
             {
@@ -182,28 +208,17 @@ namespace LGSTrayUI
 
             try
             {
-                if (manual)
-                {
-                    RediscoverDevicesEnabled = false;
-                }
-
-                long epoch = _deviceCollection.BeginPresenceCheck();
-                foreach (var manager in _deviceManagers)
-                {
-                    manager.RediscoverDevices();
-                }
-
-                await Task.Delay(TimeSpan.FromSeconds(12), cancellationToken);
-                _deviceCollection.CompletePresenceCheck(epoch, manual ? 1 : 2);
+                RediscoverDevicesEnabled = false;
+                await Task.WhenAll(_deviceManagers.Select(manager => manager.RediscoverDevicesAsync(cancellationToken)));
             }
             catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Manual device rediscover failed: {ex}");
+            }
             finally
             {
-                if (manual)
-                {
-                    RediscoverDevicesEnabled = true;
-                }
-
+                RediscoverDevicesEnabled = true;
                 _rediscoverSemaphore.Release();
             }
         }
@@ -211,8 +226,8 @@ namespace LGSTrayUI
         public Task StartAsync(CancellationToken cancellationToken)
         {
             _presenceCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            _ = Task.Run(() => PresenceLoopAsync(_presenceCts.Token), CancellationToken.None);
-            _ = Task.Run(() => AutoCheckForUpdatesAsync(_presenceCts.Token), CancellationToken.None);
+            _presenceTask = Task.Run(() => PresenceLoopAsync(_presenceCts.Token), CancellationToken.None);
+            _updateTask = Task.Run(() => AutoCheckForUpdatesAsync(_presenceCts.Token), CancellationToken.None);
             return Task.CompletedTask;
         }
 
@@ -238,15 +253,30 @@ namespace LGSTrayUI
             }
         }
 
-        public Task StopAsync(CancellationToken cancellationToken)
+        public async Task StopAsync(CancellationToken cancellationToken)
         {
             _presenceCts?.Cancel();
+            Task[] tasks =
+            [
+                _presenceTask ?? Task.CompletedTask,
+                _updateTask ?? Task.CompletedTask,
+                _manualRediscoverTask ?? Task.CompletedTask,
+            ];
+            try
+            {
+                await Task.WhenAll(tasks).WaitAsync(cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            _presenceTask = null;
+            _updateTask = null;
+            _manualRediscoverTask = null;
             _presenceCts?.Dispose();
             _presenceCts = null;
             _userSettings.PropertyChanged -= UserSettingsPropertyChanged;
             _userSettings.DeviceSettingsChanged -= UserSettingsDeviceSettingsChanged;
             _mainTaskbarIconWrapper.Dispose();
-            return Task.CompletedTask;
         }
 
         private async Task PresenceLoopAsync(CancellationToken cancellationToken)
@@ -255,8 +285,18 @@ namespace LGSTrayUI
             {
                 try
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(30), cancellationToken);
-                    await RunPresenceCheckAsync(manual: false, cancellationToken);
+                    await Task.Delay(_presencePeriod, cancellationToken);
+                    foreach (IDeviceManager manager in _deviceManagers)
+                    {
+                        try
+                        {
+                            await manager.CheckHealthAsync(cancellationToken);
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException)
+                        {
+                            Debug.WriteLine($"Device manager health check failed: {ex}");
+                        }
+                    }
                 }
                 catch (OperationCanceledException) { }
             }
@@ -273,6 +313,10 @@ namespace LGSTrayUI
                 }
             }
             catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Automatic update check failed: {ex}");
+            }
         }
     }
 }

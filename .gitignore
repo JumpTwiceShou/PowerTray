@@ -278,3 +278,6 @@ paket-files/
 # Python Tools for Visual Studio (PTVS)
 __pycache__/
 *.pyc
+
+# Release signing private key
+powertray_update_ecdsa.pem

@@ -1,11 +1,12 @@
-﻿using LGSTrayPrimitives.MessageStructs;
+using LGSTrayPrimitives.MessageStructs;
 
-namespace LGSTrayCore
+namespace LGSTrayCore;
+
+public interface ILogiDeviceCollection
 {
-    public interface ILogiDeviceCollection
-    {
-        public IEnumerable<LogiDevice> GetDevices();
-        public void OnInitMessage(InitMessage initMessage);
-        public void OnUpdateMessage(UpdateMessage updateMessage);
-    }
+    IReadOnlyList<LogiDevice> GetDevices();
+
+    void OnInitMessage(InitMessage initMessage);
+
+    void OnUpdateMessage(UpdateMessage updateMessage);
 }

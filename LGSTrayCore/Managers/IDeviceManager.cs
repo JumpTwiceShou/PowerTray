@@ -1,6 +1,8 @@
-﻿namespace LGSTrayCore.Managers;
+namespace LGSTrayCore.Managers;
 
 public interface IDeviceManager
 {
-    public void RediscoverDevices();
+    Task RediscoverDevicesAsync(CancellationToken cancellationToken);
+
+    Task CheckHealthAsync(CancellationToken cancellationToken);
 }

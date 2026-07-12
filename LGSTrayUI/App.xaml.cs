@@ -2,6 +2,7 @@
 using LGSTrayCore.Managers;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using System.Windows;
 using System;
 using LGSTrayPrimitives.IPC;
@@ -24,10 +25,13 @@ public partial class App : Application
 {
     private const string SingleInstanceMutexName = @"Local\PowerTray.NativeBattery.Instance";
     private const string ShowSettingsEventName = @"Local\PowerTray.NativeBattery.ShowSettings";
+    private const string ShutdownEventName = @"Local\PowerTray.NativeBattery.Shutdown";
 
     private Mutex? _singleInstanceMutex;
     private EventWaitHandle? _showSettingsEvent;
     private RegisteredWaitHandle? _showSettingsRegistration;
+    private EventWaitHandle? _shutdownEvent;
+    private RegisteredWaitHandle? _shutdownRegistration;
 
     protected override async void OnStartup(StartupEventArgs e)
     {
@@ -57,6 +61,7 @@ public partial class App : Application
         builder.Services.AddSingleton<LocalizationService>();
         builder.Services.AddSingleton<UpdateService>();
         builder.Services.AddSingleton<NativeDiagnosticsClient>();
+        builder.Services.AddSingleton<NativeBackendStatus>();
         builder.Services.AddSingleton<AlertStateService>();
         builder.Services.AddSingleton<SystemStateService>();
         builder.Services.AddSingleton<NotificationService>();
@@ -81,6 +86,17 @@ public partial class App : Application
         ThemedMessageBox.Translate = key => loc[key];
         _ = host.Services.GetRequiredService<ThemeService>();
         RegisterShowSettingsSignal(host.Services.GetRequiredService<SettingsWindowFactory>());
+        RegisterShutdownSignal(host.Services.GetRequiredService<IHostApplicationLifetime>());
+
+        AppSettings runtimeSettings = host.Services.GetRequiredService<IOptions<AppSettings>>().Value;
+        if (runtimeSettings.HTTPServer.Enabled && runtimeSettings.HTTPServer.RequiresAuthentication)
+        {
+            LocalizationService localization = host.Services.GetRequiredService<LocalizationService>();
+            host.Services.GetRequiredService<NotificationService>().Show(
+                localization["HttpRemoteEnabledTitle"],
+                localization["HttpRemoteEnabledBody"]
+            );
+        }
         if (e.Args.Any(x => x.Equals("--settings", StringComparison.OrdinalIgnoreCase)))
         {
             host.Services.GetRequiredService<SettingsWindowFactory>().Show();
@@ -102,14 +118,28 @@ public partial class App : Application
         _singleInstanceMutex = new Mutex(true, SingleInstanceMutexName, out bool createdNew);
         if (createdNew)
         {
+            if (args.Any(x => x.Equals("--shutdown", StringComparison.OrdinalIgnoreCase)))
+            {
+                _singleInstanceMutex.ReleaseMutex();
+                _singleInstanceMutex.Dispose();
+                _singleInstanceMutex = null;
+                return false;
+            }
+
             _showSettingsEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ShowSettingsEventName);
+            _shutdownEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ShutdownEventName);
             return true;
         }
 
         _singleInstanceMutex.Dispose();
         _singleInstanceMutex = null;
 
-        if (args.Any(x => x.Equals("--settings", StringComparison.OrdinalIgnoreCase)))
+        if (args.Any(x => x.Equals("--shutdown", StringComparison.OrdinalIgnoreCase)))
+        {
+            using EventWaitHandle shutdownEvent = new(false, EventResetMode.AutoReset, ShutdownEventName);
+            shutdownEvent.Set();
+        }
+        else if (args.Any(x => x.Equals("--settings", StringComparison.OrdinalIgnoreCase)))
         {
             using EventWaitHandle showSettingsEvent = new(false, EventResetMode.AutoReset, ShowSettingsEventName);
             showSettingsEvent.Set();
@@ -134,12 +164,32 @@ public partial class App : Application
         );
     }
 
+    private void RegisterShutdownSignal(IHostApplicationLifetime applicationLifetime)
+    {
+        if (_shutdownEvent == null)
+        {
+            return;
+        }
+
+        _shutdownRegistration = ThreadPool.RegisterWaitForSingleObject(
+            _shutdownEvent,
+            (_, _) => applicationLifetime.StopApplication(),
+            null,
+            Timeout.Infinite,
+            false
+        );
+    }
+
     private void CleanupSingleInstance()
     {
         _showSettingsRegistration?.Unregister(null);
         _showSettingsRegistration = null;
         _showSettingsEvent?.Dispose();
         _showSettingsEvent = null;
+        _shutdownRegistration?.Unregister(null);
+        _shutdownRegistration = null;
+        _shutdownEvent?.Dispose();
+        _shutdownEvent = null;
         _singleInstanceMutex?.ReleaseMutex();
         _singleInstanceMutex?.Dispose();
         _singleInstanceMutex = null;

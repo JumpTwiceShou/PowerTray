@@ -6,6 +6,7 @@ internal sealed class DeferredOfflineGate : IDisposable
 {
     private readonly object _sync = new();
     private readonly Dictionary<string, CancellationTokenSource> _deferredOfflineSignals = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<Task> _pendingTasks = [];
     private readonly Action<string>? _addDiagnosticEvent;
     private readonly Func<string, string> _hashDeviceIdForDiagnostics;
 
@@ -77,7 +78,7 @@ internal sealed class DeferredOfflineGate : IDisposable
             $"Deferred offline for device hash={_hashDeviceIdForDiagnostics(offlineMessage.deviceId)}"
         );
 
-        _ = Task.Run(async () =>
+        Task pendingTask = Task.Run(async () =>
         {
             try
             {
@@ -96,11 +97,26 @@ internal sealed class DeferredOfflineGate : IDisposable
                 emitOffline(offlineMessage);
             }
             catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                _addDiagnosticEvent?.Invoke($"Deferred offline callback failed: {ex.GetType().Name}: {ex.Message}");
+            }
             finally
             {
                 cts.Dispose();
             }
         });
+        lock (_sync)
+        {
+            _pendingTasks.Add(pendingTask);
+        }
+        _ = pendingTask.ContinueWith(completed =>
+        {
+            lock (_sync)
+            {
+                _pendingTasks.Remove(completed);
+            }
+        }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
 
         return true;
     }
@@ -146,6 +162,28 @@ internal sealed class DeferredOfflineGate : IDisposable
         foreach (CancellationTokenSource cts in deferredSignals)
         {
             cts.Cancel();
+        }
+    }
+
+    public async Task WaitForPendingAsync(CancellationToken cancellationToken)
+    {
+        Task[] tasks;
+        lock (_sync)
+        {
+            tasks = _pendingTasks.ToArray();
+        }
+
+        if (tasks.Length == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            await Task.WhenAll(tasks).WaitAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
         }
     }
 

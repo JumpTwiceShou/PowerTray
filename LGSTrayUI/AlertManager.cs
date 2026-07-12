@@ -2,20 +2,24 @@ using LGSTrayPrimitives;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.Linq;
 using System.Windows.Threading;
 
 namespace LGSTrayUI;
 
-public sealed class AlertManager
+public sealed class AlertManager : IDisposable
 {
     private readonly UserSettingsWrapper _settings;
     private readonly AlertStateService _alertState;
     private readonly NotificationService _notifications;
     private readonly SystemStateService _systemState;
     private readonly Dictionary<string, RuntimeAlertState> _runtime = [];
-    private ObservableCollection<LogiDeviceViewModel>? _devices;
     private readonly DispatcherTimer _timer;
+    private readonly Action<string> _settingsChangedHandler;
+
+    private ObservableCollection<LogiDeviceViewModel>? _devices;
+    private bool _disposed;
 
     public AlertManager(
         UserSettingsWrapper settings,
@@ -28,24 +32,30 @@ public sealed class AlertManager
         _alertState = alertState;
         _notifications = notifications;
         _systemState = systemState;
-        _settings.DeviceSettingsChanged += _ => EvaluateAll();
+        _settingsChangedHandler = _ => EvaluateAll();
+        _settings.DeviceSettingsChanged += _settingsChangedHandler;
 
         _timer = new DispatcherTimer
         {
             Interval = TimeSpan.FromSeconds(10),
         };
-        _timer.Tick += (_, _) => EvaluateAll();
+        _timer.Tick += OnTimerTick;
         _timer.Start();
     }
 
     public void SetDevices(ObservableCollection<LogiDeviceViewModel> devices)
     {
+        if (_devices != null)
+        {
+            _devices.CollectionChanged -= OnDevicesCollectionChanged;
+        }
+
         _devices = devices;
         foreach (LogiDeviceViewModel device in devices)
         {
             Evaluate(device);
         }
-        devices.CollectionChanged += (_, _) => EvaluateAll();
+        devices.CollectionChanged += OnDevicesCollectionChanged;
     }
 
     public void EvaluateAll()
@@ -68,10 +78,17 @@ public sealed class AlertManager
             return;
         }
 
-        _settings.GetDeviceSettings(device.DeviceId, device.DeviceName);
         RuntimeAlertState state = GetRuntimeState(device.DeviceId);
-        DateTimeOffset now = DateTimeOffset.Now;
+        if (!device.IsOnline)
+        {
+            state.HasNotifiedThisCycle = false;
+            state.WasSuppressed = false;
+            _alertState.SetBlinking(device.DeviceId, false);
+            return;
+        }
 
+        _settings.GetDeviceSettings(device.DeviceId, device.DeviceName);
+        DateTimeOffset now = DateTimeOffset.Now;
         bool paused = _settings.IsDevicePaused(device.DeviceId, now);
         bool lowBattery = device.HasBattery &&
                           device.BatteryPercentage >= 0 &&
@@ -82,13 +99,12 @@ public sealed class AlertManager
         if (!lowBattery || paused)
         {
             state.HasNotifiedThisCycle = false;
-            state.NotificationPending = false;
+            state.WasSuppressed = false;
             _alertState.SetBlinking(device.DeviceId, false);
             return;
         }
 
         _alertState.SetBlinking(device.DeviceId, _settings.GetTrayBlinkEnabled(device.DeviceId));
-
         if (!_settings.GetWindowsNotificationEnabled(device.DeviceId) || state.HasNotifiedThisCycle)
         {
             return;
@@ -98,13 +114,33 @@ public sealed class AlertManager
                                     (_settings.SuppressNotificationsWhenFullscreen && _systemState.IsForegroundFullscreen());
         if (suppressNotification)
         {
-            state.NotificationPending = true;
+            state.WasSuppressed = true;
             return;
         }
 
         _notifications.ShowLowBattery(device);
         state.HasNotifiedThisCycle = true;
-        state.NotificationPending = false;
+        state.WasSuppressed = false;
+    }
+
+    public void RemoveDeviceState(string deviceId)
+    {
+        _runtime.Remove(deviceId);
+        _alertState.Remove(deviceId);
+    }
+
+    public void MigrateDeviceState(string oldDeviceId, string newDeviceId)
+    {
+        if (string.Equals(oldDeviceId, newDeviceId, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        if (_runtime.Remove(oldDeviceId, out RuntimeAlertState? existing))
+        {
+            _runtime[newDeviceId] = existing;
+        }
+        _alertState.Migrate(oldDeviceId, newDeviceId);
     }
 
     public void TestBlink(LogiDeviceViewModel device)
@@ -125,6 +161,7 @@ public sealed class AlertManager
     public void TestBlinkAll(IEnumerable<LogiDeviceViewModel> devices)
     {
         LogiDeviceViewModel[] targets = devices
+            .Where(device => device.IsOnline)
             .Where(device => !string.IsNullOrWhiteSpace(device.DeviceId) &&
                              device.DeviceId != LGSTrayCore.LogiDevice.NOT_FOUND)
             .ToArray();
@@ -159,6 +196,43 @@ public sealed class AlertManager
         _alertState.ClearAll();
     }
 
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        _timer.Stop();
+        _timer.Tick -= OnTimerTick;
+        _settings.DeviceSettingsChanged -= _settingsChangedHandler;
+        if (_devices != null)
+        {
+            _devices.CollectionChanged -= OnDevicesCollectionChanged;
+            _devices = null;
+        }
+        _runtime.Clear();
+        _alertState.ClearAll();
+    }
+
+    private void OnTimerTick(object? sender, EventArgs e)
+    {
+        EvaluateAll();
+    }
+
+    private void OnDevicesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        if (e.OldItems != null)
+        {
+            foreach (LogiDeviceViewModel device in e.OldItems.OfType<LogiDeviceViewModel>())
+            {
+                RemoveDeviceState(device.DeviceId);
+            }
+        }
+        EvaluateAll();
+    }
+
     private RuntimeAlertState GetRuntimeState(string deviceId)
     {
         if (!_runtime.TryGetValue(deviceId, out RuntimeAlertState? state))
@@ -166,7 +240,6 @@ public sealed class AlertManager
             state = new();
             _runtime[deviceId] = state;
         }
-
         return state;
     }
 
@@ -188,6 +261,6 @@ public sealed class AlertManager
     private sealed class RuntimeAlertState
     {
         public bool HasNotifiedThisCycle { get; set; }
-        public bool NotificationPending { get; set; }
+        public bool WasSuppressed { get; set; }
     }
 }
