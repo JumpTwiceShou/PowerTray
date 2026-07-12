@@ -57,6 +57,7 @@
 
 - `completed`：实际编译、checksum/signature、轻量/完整版安装升级卸载验证全部完成。
 - 安装器仍为本地 ignored build output；未上传、未创建 tag/Release/PR，未使用公开仓库。
+- 实现与验证提交：`77097bb` (`Build reproducible hidapi and validate installers`)。
 
 ## 完成标准
 

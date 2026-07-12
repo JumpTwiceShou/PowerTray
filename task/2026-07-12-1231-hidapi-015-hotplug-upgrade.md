@@ -248,3 +248,7 @@ hidapi 0.15.0 稳定代码
 - Windows VM102 当前没有枚举到任何 `VID_046D` Logitech USB/PnP 设备，无法执行 G Pro Wireless Mouse、Pro X 2 Lightspeed、电量、休眠唤醒、充电线重枚举、20 次快速插拔和资源增长检查。
 - 2 小时普通使用 smoke 也必须在真实设备接入后进行。此前用户明确排除的 24 小时测试没有重新加入。
 - 在上述硬件门禁完成前，禁止把 `FA2477A9...22FD1` 替换为正式 `LGSTrayHID/libhidapi/hidapi.dll`；当前稳定 DLL 继续为 `38BDA32F...B4D`。本 task 保持 active/blocked，而非提前归档。
+
+## 提交
+
+- `77097bb` (`Build reproducible hidapi and validate installers`)：固定源码/工具链/native build、ABI 门禁、shutdown 修复、RID lock、安装器编译与 smoke 结果；正式 hidapi DLL 未替换。
