@@ -2,7 +2,7 @@ param(
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Release",
     [ValidatePattern('^\d+\.\d+\.\d+(?:\.\d+)?$')]
-    [string]$Version = "1.4.1",
+    [string]$Version = "1.4.2",
     [string]$Dotnet = "dotnet",
     [string]$Iscc = "",
     [string]$SigningKey = "$env:USERPROFILE\.ssh\powertray_update_ecdsa.pem"

@@ -480,7 +480,7 @@
           "Microsoft.Extensions.Configuration.Binder": "[8.0.0, )",
           "Microsoft.Extensions.Hosting": "[8.0.0, )",
           "Newtonsoft.Json": "[13.0.3, )",
-          "PowerTrayHID": "[1.4.1, )",
+          "PowerTrayHID": "[1.4.2, )",
           "System.Diagnostics.EventLog": "[8.0.0, )",
           "System.Management": "[8.0.0, )",
           "Tommy.Extensions.Configuration": "[6.2.0, )",

@@ -4,6 +4,7 @@
 - 创建时间: `2026-07-12 12:31 +09:00`
 - 状态: `blocked`
 - 优先级: `high`
+- 目标应用版本: `1.4.2`
 - 来源: `task/2026-07-12-1156-hidapi-provenance-and-update-key-backup.md`
 
 > 执行纪律：完成一项后立即勾选并记录证据，禁止提前或批量勾选。
@@ -242,6 +243,12 @@ hidapi 0.15.0 稳定代码
 - shutdown guard 后重新执行 Debug build（`0 warning / 0 error`）与 `PowerTray.Tests` 均通过。隔离 UI runtime 携带新 DLL 后 `/health` 返回 HTTP 200；随后用同一 runtime 的 `PowerTray.exe --shutdown` 触发正式停止路径，`PowerTray`/`PowerTrayHID` 在 10 秒门限内全部退出、无孤儿进程，且该运行窗口内 Application log 没有新的 `.NET Runtime`、`Application Error` 或 `Windows Error Reporting` 事件。callback deregistration/host stop 门禁通过。
 - 当前 Windows VM 的 `Get-PnpDevice -PresentOnly` 与 `Win32_PnPEntity` 都没有 `VID_046D`，因此设备识别、电量、休眠、插拔、资源增长与 2 小时 smoke 仍等待 Logitech USB 设备接入；正式 DLL 保持旧稳定版本，不在硬件门禁缺失时替换。
 - 最终 scoped validation 再次通过：locked restore、Debug build、Release build 均成功且 `0 warning / 0 error`，`PowerTray.Tests`、正式旧 DLL x64/hash/12-export 验证与 `git diff --check` 通过。新 DLL 只存在 ignored test artifact；tracked tree 未替换正式二进制，installer task 使用旧稳定 DLL 完成并已归档。
+
+## 版本准备
+
+- 2026-07-12 已将 `LGSTrayUI`、`LGSTrayHID`、Inno Setup 默认版本和 `build-installer.ps1` 默认版本统一从 `1.4.1` 提升至 `1.4.2`，并通过重新 restore 更新项目引用 lock file。
+- 此版本号仅表示下一版候选；在完整硬件门禁、安装器验证、发布说明确认和用户明确授权前，不创建公共 tag 或 GitHub Release。
+- `dotnet restore --locked-mode`、Debug/Release build、Release `PowerTray.Tests`、`build-installer.ps1` PowerShell 语法解析和 `git diff --check` 均通过；构建产物报告 `ProductVersion 1.4.2+2dd2582...`、`FileVersion 1.4.2.0`。
 
 ## 当前阻塞
 
