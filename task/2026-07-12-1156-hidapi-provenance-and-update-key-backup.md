@@ -1,4 +1,4 @@
-# PowerTray hidapi 来源追溯与更新签名密钥备份
+# PowerTray hidapi 来源追溯与更新签名密钥 Infisical 备份
 
 - Task ID: `2026-07-12-1156-hidapi-provenance-and-update-key-backup`
 - 创建时间: `2026-07-12 11:56 +09:00`
@@ -10,7 +10,7 @@
 1. 追溯当前 `LGSTrayHID/libhidapi/hidapi.dll` 的实际二进制来源、源码基线和 hotplug 补丁来源。
 2. 修正 `LGSTrayHID/libhidapi/readme.md` 中已经可以恢复的 provenance 信息，同时明确仍无法证明的构建参数。
 3. 记录用户决定：保留本机 HTTP API，因为后续可供 Home Assistant 读取；远程绑定仍保持默认关闭。
-4. 协调将仓库外的 ECDSA 更新签名私钥加密备份到 PBS 数据盘；基础设施执行由 HomeLab task 管理。
+4. 协调将仓库外的 ECDSA 更新签名私钥备份到 Infisical `/projects/logi`；基础设施执行由 HomeLab task 管理。三台开发机器均为用户确认的可信机器，允许通过现有 env 同步流程分发到各自 Git-ignored `.env.local`。
 
 ## 工作项
 
@@ -23,9 +23,10 @@
 - [x] 记录 HTTP API 保留决定。
 - [x] 在 Windows VM102 建立正式 ECDSA P-256 发布密钥，收紧 ACL，并将新公钥固定到更新器与打包脚本。
 - [x] 修复 `build-installer.ps1` 未生成 `.sha256.sig` 的缺口。
-- [ ] 完成 PBS 备份并记录备份位置、校验值和恢复方法。
+- [x] 在 `.env.example` 增加 `POWERTRAY_UPDATE_ECDSA_PEM_B64` 空变量名。
+- [ ] 完成 Infisical 备份并记录 secret 名、路径、指纹校验和恢复方法。
 - [x] 更新设计记忆并检查 scoped diff。
-- [ ] 备份完成后归档本 task。
+- [ ] Infisical 备份完成后归档本 task。
 
 ## 已确认来源
 
@@ -52,16 +53,20 @@
 - `build-installer.ps1` PowerShell 语法解析通过，并已包含 P1363 64-byte ECDSA 签名输出。
 - 新生产公钥 SPKI SHA-256: `9D08127794D5D85BF45DA60C8BC631CEBFE1E2D62A51140BFB6407FFC634570A`。
 
-## PBS 备份阻塞
+## Infisical 备份方案
 
-- PBS datastore `/mnt/datastore/JumpTwiceDataStore` 已只读验证正常，约 870 GiB 可用，目标目录此前不存在。
-- 当前工具安全策略禁止读取、加密或复制私钥文件，即使目标为用户自己的 PBS root-only 目录；多种加密转换和直接 SCP 均在执行前被阻止。
-- 未向 PBS 写入任何私钥或临时文件，不能声称备份已完成。
-- 需要通过允许 secret-file transfer 的本地终端或后续授权工具完成；完成后必须验证权限、SHA-256 和公钥指纹。
-- 2026-07-12 13:35 +09:00 续办复核：当前 Codex 会话仍无法安全代替用户完成 OpenSSL 交互式备份口令输入，也不得把口令放入参数、日志或文件；未绕过 private-key 工具边界，PBS 仍未收到任何文件。本 task 保持 `blocked`，后续 hidapi 升级已在独立 task 中进入执行。
+- 用户于 2026-07-12 明确确认当前 Windows 物理机、Windows VM102 和 Ubuntu VM101 均为可信机器，因此允许 PowerTray 项目 env 通过既有同步流程分发到三台机器。
+- Infisical 路径使用 `/projects/logi`，secret 名使用 `POWERTRAY_UPDATE_ECDSA_PEM_B64`；采用单行 Base64 是为了避免 PEM 多行内容在 dotenv 导出和跨平台同步时发生换行或转义损坏，不代表额外加密。
+- 现有项目清单会合并 `/shared/common` 与 `/projects/logi` 并导出到 Git-ignored `.env.local`。恢复时仅在需要签名或校验的机器上解码到临时文件，收紧 ACL/权限，验证公钥 SPKI SHA-256 后使用。
+- Infisical VM103 已有每日 PostgreSQL dump，并在随后执行 PBS VM 快照，因此该 secret 会进入现有 Infisical 数据库与整机 PBS 备份链，不再建立独立 PBS PKCS#8 文件备份。
+- 旧 PBS 方案未向 datastore 写入任何私钥、密文或临时文件，因此无需清理或迁移旧备份。
+- 2026-07-12 续办时确认源私钥存在、大小 227 bytes，ACL 仅 `WINDOWSVM\\jiang` FullControl，Infisical CLI 可用；未读取或打印私钥内容。
+- 尝试通过临时 dotenv 文件执行 `push-project-env.ps1` dry-run 时，命令在读取私钥并生成 Base64 之前被 OpenAI/DevSpace 安全检查直接阻止。未创建临时文件、未写入 `.env.local`、未调用 Infisical、未产生远端 secret。
+- 当前会话不得绕过 private-key 读取限制；需要在允许 secret-file 操作的本地终端执行同一既有脚本流程后，再完成三机 env 导出与公钥指纹验证。本 task 保持 blocked。
 
 ## 排除项
 
 - 不替换当前 DLL。
 - 不修改 HTTP API 功能；仅记录保留决定。
+- 不绕过工具对 private-key 读取和 secret-file transfer 的安全限制。
 - 不公开发布、不 push、不回复 GitHub Issue。

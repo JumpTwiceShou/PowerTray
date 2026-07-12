@@ -126,15 +126,15 @@ hidapi 0.15.0 稳定代码
 ### 基础检测
 
 - [x] PowerTray 和 PowerTrayHID 正常启动，无 `EntryPointNotFoundException`、`BadImageFormatException` 或 native crash。
-- [ ] G Pro Wireless Mouse 正常识别并读取电量。
-- [ ] Pro X 2 Lightspeed 正常识别并读取电量。
-- [ ] 设备名称、序列号、Unit ID、ContainerId 和持久化 identity 没有异常变化。
-- [ ] 多设备同时在线时不发生串设备或电量覆盖。
+- [x] G Pro Wireless Mouse（当前设备名 `PRO X2 SUPERSTRIKE Wireless Mouse`）正常识别并读取电量。
+- [x] Pro X 2 Lightspeed 正常识别并读取电量。
+- [x] 设备名称、设备 ID 和持久化 identity 在本轮启动/重启验证中没有异常变化。
+- [x] 鼠标与耳机同时在线时分别显示 88% 与 59%，未发生串设备或电量覆盖。
 
 ### HID 读写
 
-- [ ] 初次枚举成功。
-- [ ] 电量查询与强制刷新成功。
+- [x] 初次枚举成功。
+- [ ] 电量查询成功；强制刷新仍需独立执行验证。
 - [ ] 设备休眠后唤醒可恢复更新。
 - [ ] 超时读取不会造成持续高 CPU、100ms 累积卡顿或 reader loop 卡死。
 - [ ] 发送失败和读取失败能正确记录并触发既有恢复逻辑。
@@ -154,7 +154,7 @@ hidapi 0.15.0 稳定代码
 - [ ] 运行期间 native handle 数量无持续增长。
 - [ ] 多次 rediscover 后线程数无持续增长。
 - [ ] 快速插拔期间 CPU 不出现持续异常占用。
-- [ ] Windows 事件查看器无新的 Application Error、BEX、Access Violation 或 native crash。
+- [x] 完成实机读取与优雅退出的验证窗口内，Windows 事件查看器无新的 `.NET Runtime`、`Application Error` 或 `Windows Error Reporting`。
 - [ ] 运行至少 2 小时的常规使用烟雾测试；此前用户排除的 24 小时长稳测试仍不强制。
 
 ## 阶段 7：回滚验证
@@ -245,14 +245,17 @@ hidapi 0.15.0 稳定代码
 
 ## 当前阻塞
 
-- Windows VM102 当前没有枚举到任何 `VID_046D` Logitech USB/PnP 设备，无法执行 G Pro Wireless Mouse、Pro X 2 Lightspeed、电量、休眠唤醒、充电线重枚举、20 次快速插拔和资源增长检查。
-- 2 小时普通使用 smoke 也必须在真实设备接入后进行。此前用户明确排除的 24 小时测试没有重新加入。
-- 在上述硬件门禁完成前，禁止把 `FA2477A9...22FD1` 替换为正式 `LGSTrayHID/libhidapi/hidapi.dll`；当前稳定 DLL 继续为 `38BDA32F...B4D`。本 task 保持 active/blocked，而非提前归档。
+- 2026-07-12 已在 Windows 物理机使用固定候选 DLL `FA2477A9...22FD1` 完成真实设备枚举和电量读取：`PRO X2 SUPERSTRIKE Wireless Mouse` 88%，`PRO X 2 Lightspeed Gaming Headset` 59%，二者同时在线且 identity 稳定。
+- 实机验证同时发现并修复独立阻断：MessagePipe 1.8.2 的 subscriber 会无条件创建 server；原 UI/helper 共用一个双向管道时会各自连回自身，造成 helper 有进程但无心跳和设备事件。提交 `f7bafb5` 改为 `HidToUi` 与 `UiToHid` 两条单向管道，并增加双向 IPC 集成测试。
+- 当前工具会话不能自动执行真实 USB 拔插；中等完整性会话无权 `Disable-PnpDevice`，Windows VM 到物理机的 SSH/WinRM 端口均未开放，而包含设备禁用/启用的提权命令被平台安全检查阻止。未发生任何半完成的设备禁用。
+- 因此接收器拔插、充电线重枚举、20 次快速插拔、休眠唤醒、强制刷新、资源增长和 2 小时普通使用 smoke 仍未验证。此前用户排除的 24 小时测试没有重新加入。
+- Windows VM 使用固定 SDK 10.0.26100.0 再次重建出预期 `FA2477A9...22FD1`，但遵守 fail-closed 门禁，在上述测试完成前已将未提交的正式 DLL 替换回滚；当前正式 DLL 继续为 `38BDA32F...B4D`。本 task 保持 active/blocked。
 
 ## 提交
 
 - `77097bb` (`Build reproducible hidapi and validate installers`)：固定源码/工具链/native build、ABI 门禁、shutdown 修复、RID lock、安装器编译与 smoke 结果；正式 hidapi DLL 未替换。
 - `9e3248f` (`Record PowerTray validation status`)：记录 blocked 硬件门禁、安装器 task 归档与实现提交。
+- `f7bafb5` (`Fix bidirectional native IPC`)：修复 UI/helper 单管道自连接问题，增加双向命名管道集成测试，并让 native 构建脚本在 PowerShell 5 下兼容且固定 SDK 10.0.26100.0。
 
 ## 设备同步
 
