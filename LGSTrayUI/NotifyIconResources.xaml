@@ -1,14 +1,28 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                     xmlns:local="clr-namespace:LGSTrayUI"
+                    xmlns:po="http://schemas.microsoft.com/winfx/2006/xaml/presentation/options"
                     xmlns:tb="http://www.hardcodet.net/taskbar">
     <BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter"/>
 
+    <!--
+      ContextMenu submenus live in separate Popup visual trees. Keep one mutable palette
+      at application-resource scope so every generated submenu container uses the same
+      brush instances instead of resolving theme resources independently.
+    -->
+    <SolidColorBrush x:Key="TrayMenuResolvedBackgroundBrush" Color="#FFFFFF" po:Freeze="False"/>
+    <SolidColorBrush x:Key="TrayMenuResolvedBorderBrush" Color="#D7DEE8" po:Freeze="False"/>
+    <SolidColorBrush x:Key="TrayMenuResolvedForegroundBrush" Color="#111827" po:Freeze="False"/>
+    <SolidColorBrush x:Key="TrayMenuResolvedMutedBrush" Color="#5B6472" po:Freeze="False"/>
+    <SolidColorBrush x:Key="TrayMenuResolvedHoverBrush" Color="#E8EEF7" po:Freeze="False"/>
+    <SolidColorBrush x:Key="TrayMenuResolvedSeparatorBrush" Color="#E2E8F0" po:Freeze="False"/>
+    <SolidColorBrush x:Key="TrayMenuResolvedDisabledBrush" Color="#9CA3AF" po:Freeze="False"/>
+    <SolidColorBrush x:Key="TrayMenuResolvedAccentBrush" Color="#3B82F6" po:Freeze="False"/>
+
     <Style x:Key="TrayMenuItemStyle" TargetType="MenuItem">
         <Setter Property="Background" Value="Transparent"/>
-        <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
-        <Setter Property="BorderBrush" Value="{DynamicResource BorderBrushSoft}"/>
-        <Setter Property="Tag" Value="{DynamicResource MenuBackgroundBrush}"/>
+        <Setter Property="Foreground" Value="{StaticResource TrayMenuResolvedForegroundBrush}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource TrayMenuResolvedBorderBrush}"/>
         <Setter Property="FontFamily" Value="{DynamicResource UIFontFamily}"/>
         <Setter Property="FontSize" Value="{DynamicResource UIMenuFontSize}"/>
         <Setter Property="MinHeight" Value="26"/>
@@ -43,7 +57,7 @@
                                       Data="M 0 0 L 4 4 L 0 8 Z"
                                       Width="4"
                                       Height="8"
-                                      Fill="{DynamicResource MutedTextBrush}"
+                                      Fill="{StaticResource TrayMenuResolvedMutedBrush}"
                                       HorizontalAlignment="Center"
                                       VerticalAlignment="Center"
                                       Visibility="Collapsed"/>
@@ -55,8 +69,8 @@
                                IsOpen="{Binding IsSubmenuOpen, RelativeSource={RelativeSource TemplatedParent}}"
                                Placement="Right"
                                PopupAnimation="Fade">
-                            <Border Background="{TemplateBinding Tag}"
-                                    BorderBrush="{TemplateBinding BorderBrush}"
+                            <Border Background="{StaticResource TrayMenuResolvedBackgroundBrush}"
+                                    BorderBrush="{StaticResource TrayMenuResolvedBorderBrush}"
                                     BorderThickness="1"
                                     CornerRadius="8"
                                     Padding="2">
@@ -74,10 +88,10 @@
                             <Setter TargetName="Arrow" Property="Visibility" Value="Visible"/>
                         </Trigger>
                         <Trigger Property="IsHighlighted" Value="True">
-                            <Setter TargetName="ItemBorder" Property="Background" Value="{DynamicResource MenuHoverBrush}"/>
+                            <Setter TargetName="ItemBorder" Property="Background" Value="{StaticResource TrayMenuResolvedHoverBrush}"/>
                         </Trigger>
                         <Trigger Property="IsEnabled" Value="False">
-                            <Setter Property="Foreground" Value="{DynamicResource DisabledTextBrush}"/>
+                            <Setter Property="Foreground" Value="{StaticResource TrayMenuResolvedDisabledBrush}"/>
                             <Setter TargetName="ItemBorder" Property="Opacity" Value="0.65"/>
                         </Trigger>
                     </ControlTemplate.Triggers>
@@ -92,7 +106,7 @@
                 <ControlTemplate TargetType="Separator">
                     <Border Height="1"
                              Margin="6,3"
-                            Background="{DynamicResource MenuSeparatorBrush}"/>
+                            Background="{StaticResource TrayMenuResolvedSeparatorBrush}"/>
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
@@ -100,9 +114,9 @@
 
     <ContextMenu x:Shared="True"
                  x:Key="SysTrayMenu"
-                 Background="{DynamicResource MenuBackgroundBrush}"
-                 BorderBrush="{DynamicResource BorderBrushSoft}"
-                 Foreground="{DynamicResource TextBrush}"
+                 Background="{StaticResource TrayMenuResolvedBackgroundBrush}"
+                 BorderBrush="{StaticResource TrayMenuResolvedBorderBrush}"
+                 Foreground="{StaticResource TrayMenuResolvedForegroundBrush}"
                  HasDropShadow="False"
                  OverridesDefaultStyle="True"
                  Padding="2"
@@ -152,12 +166,12 @@
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="&#x2713;"
                                    FontWeight="Bold"
-                                   Foreground="{DynamicResource AccentBrush}"
+                                   Foreground="{StaticResource TrayMenuResolvedAccentBrush}"
                                    HorizontalAlignment="Left"
                                    Visibility="{Binding IsChecked, Converter={StaticResource BoolToVisibilityConverter}}"/>
                         <TextBlock Grid.Column="1"
                                    Text="{Binding DisplayName}"
-                                   Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=MenuItem}}"
+                                   Foreground="{StaticResource TrayMenuResolvedForegroundBrush}"
                                    TextTrimming="CharacterEllipsis"/>
                     </Grid>
                 </DataTemplate>
@@ -173,8 +187,8 @@
                         <ColumnDefinition Width="13"/>
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
-                    <TextBlock Text="&#x2713;" FontWeight="Bold" Foreground="{DynamicResource AccentBrush}" Visibility="{Binding MenuNumericDisplay, Converter={StaticResource BoolToVisibilityConverter}}"/>
-                    <TextBlock Grid.Column="1" Text="{Binding Loc[MenuNumericIcon]}"/>
+                    <TextBlock Text="&#x2713;" FontWeight="Bold" Foreground="{StaticResource TrayMenuResolvedAccentBrush}" Visibility="{Binding MenuNumericDisplay, Converter={StaticResource BoolToVisibilityConverter}}"/>
+                    <TextBlock Grid.Column="1" Text="{Binding Loc[MenuNumericIcon]}" Foreground="{StaticResource TrayMenuResolvedForegroundBrush}"/>
                 </Grid>
             </MenuItem.Header>
         </MenuItem>
@@ -185,8 +199,8 @@
                         <ColumnDefinition Width="13"/>
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
-                    <TextBlock Text="&#x2713;" FontWeight="Bold" Foreground="{DynamicResource AccentBrush}" Visibility="{Binding AutoStart, Converter={StaticResource BoolToVisibilityConverter}}"/>
-                    <TextBlock Grid.Column="1" Text="{Binding Loc[MenuAutoStart]}"/>
+                    <TextBlock Text="&#x2713;" FontWeight="Bold" Foreground="{StaticResource TrayMenuResolvedAccentBrush}" Visibility="{Binding AutoStart, Converter={StaticResource BoolToVisibilityConverter}}"/>
+                    <TextBlock Grid.Column="1" Text="{Binding Loc[MenuAutoStart]}" Foreground="{StaticResource TrayMenuResolvedForegroundBrush}"/>
                 </Grid>
             </MenuItem.Header>
         </MenuItem>

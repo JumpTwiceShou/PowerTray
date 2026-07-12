@@ -108,7 +108,8 @@ hidapi 0.15.0 稳定代码
 - [x] 检查 hotplug 回调线程上下文是否允许当前 C# callback 只做轻量排队。
 - [x] 检查 callback deregistration 和 `HidppManagerContext.DisposeAsync` 的顺序。
 - [x] 修复多个托盘设备提示框未统一跟随 PowerTray 主题的问题，并在深色/浅色主题下验证。
-- [ ] 修复深色主题托盘右键菜单 Header、设备子菜单背景和设备文字未统一跟随主题的问题，并实机验证。
+- [x] 将托盘右键菜单全部颜色迁移到单一可变调色板，消除根菜单与 Popup 子菜单分别解析主题资源造成的背景/文字回退。
+- [ ] 在深色和浅色主题下对根菜单、设备子菜单、禁用版本项、勾选图标、悬停和分隔线做最终实机目视确认。
 - [ ] 仅在完成代码和 ABI 检查后替换 `LGSTrayHID/libhidapi/hidapi.dll`。
 - [ ] 更新 `verify-hidapi.ps1` 中固定 SHA-256 和 export 检查。
 - [ ] 更新 `LGSTrayHID/libhidapi/readme.md`，记录准确 commit、工具链、命令、flags 和产物证据。
@@ -293,4 +294,5 @@ hidapi 0.15.0 稳定代码
 - 当前 Windows 物理机已将 `efa1ed2` 与 `b6333b1` 推送到私有 `sync/main`；`git ls-remote` 复核 local HEAD 与 `sync/main` 均为 `b6333b1516aa61cbb426b8eb38e851eea5f83b66`，tracked/untracked worktree 均干净。公共 `origin` 未改动。
 - 托盘主题修复完成后继续原 1.4.2 总任务；隔离候选 UI/helper 自 2026-07-12 18:49 起保持运行，恢复两小时资源与设备状态采样，并并行完成无需物理操作的接口、事件日志和文档门禁。只有再次到达确实需要接收器拔插、耳机充电线或系统休眠的步骤时才请求维护者动作。
 - 深色托盘右键菜单第一次修复后的实机截图仍显示两类回归：自定义 Header 中的禁用文字继续被 `ContextMenu.Resources` 内隐式 `TextBlock.Foreground` 覆盖，设备子菜单的独立 `Popup` 仍无法可靠解析父菜单动态背景资源。第二轮修复删除冲突的 `TextBlock.Foreground`，让所有标题继承 `MenuItem.Foreground`，并把子菜单 Border 绑定到 `PART_Popup.PlacementTarget.Tag`；每次打开前仍由 `TrayContextMenuPlacement.ApplyCurrentTheme` 显式写入当前调色板。
-- 维护者随后提供的最新截图确认第二轮仍有设备子菜单背景透明/回退问题。第三轮改为让 Popup Border 通过 `TemplateBinding Tag` 直接读取其模板宿主 `MenuItem` 上已解析的当前主题背景，不再跨 Popup 名称作用域取 `PlacementTarget`；子菜单边框同样通过 `TemplateBinding BorderBrush` 获取，打开菜单前显式刷新到所有已实现菜单项。设备名称 `TextBlock` 也显式绑定所属 `MenuItem.Foreground`，避免独立 Popup 中的文字继承链失效。`LGSTrayUI` Debug build 为 `0 warning / 0 error`，`PowerTray.Tests passed`，`git diff --check` 通过；新 `PowerTray.dll` SHA-256 为 `BFBC1550...EDE9`，已通过 `--shutdown` 优雅替换进隔离 runtime 并重启，PowerTray/PowerTrayHID 均响应且无新 PowerTray runtime error。最终视觉门禁仍等待维护者确认，因此本项暂不勾选。
+- 维护者随后提供的最新截图确认第二轮仍有设备子菜单背景透明/回退问题。第三轮改为让 Popup Border 通过 `TemplateBinding Tag` 直接读取其模板宿主 `MenuItem` 上已解析的当前主题背景，不再跨 Popup 名称作用域取 `PlacementTarget`；子菜单边框同样通过 `TemplateBinding BorderBrush` 获取，打开菜单前显式刷新到所有已实现菜单项。设备名称 `TextBlock` 也显式绑定所属 `MenuItem.Foreground`，避免独立 Popup 中的文字继承链失效。`LGSTrayUI` Debug build 为 `0 warning / 0 error`，`PowerTray.Tests passed`，`git diff --check` 通过；新 `PowerTray.dll` SHA-256 为 `BFBC1550...EDE9`，已通过 `--shutdown` 优雅替换进隔离 runtime 并重启，PowerTray/PowerTrayHID 均响应且无新 PowerTray runtime error。
+- 最新实机截图又确认设备名称仍回退为黑色，说明继续依赖 `MenuItem.Foreground`、`DynamicResource` 或 Popup 生成时机都不可靠。最终修复不再逐项补丁：`NotifyIconResources.xaml` 定义 8 个 `po:Freeze="False"` 的共享 `SolidColorBrush`，覆盖背景、边框、正文、次要文字、悬停、分隔线、禁用文字和强调色；根菜单、所有 Header、动态设备 `DataTemplate` 与独立 Popup 全部只引用这些静态共享实例。每次菜单打开前，`TrayContextMenuPlacement` 仅把当前 PowerTray 主题颜色复制到共享实例，不再遍历未生成的 `ItemsSource` 容器，也不再依赖跨 Popup 的资源继承。Debug build 为 `0 warning / 0 error`，`PowerTray.Tests passed`；新隔离 runtime `PowerTray.dll` SHA-256 为 `67BC0CF0...BCC1A`，UI/helper 已优雅重启并保持响应。剩余只需维护者做一次深色/浅色最终目视确认。
