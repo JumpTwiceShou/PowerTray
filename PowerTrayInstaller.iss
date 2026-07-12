@@ -60,6 +60,15 @@ chinesesimp.LaunchAfterInstall=安装完成后启动 PowerTray
 english.MissingRuntimeMessage=PowerTray requires the Microsoft .NET 8 Desktop Runtime x64, including Microsoft.NETCore.App 8.x and Microsoft.WindowsDesktop.App 8.x. The download page will open now. Please install the runtime, then run this setup again.
 japanese.MissingRuntimeMessage=PowerTray には Microsoft .NET 8 Desktop Runtime x64 が必要です。Microsoft.NETCore.App 8.x と Microsoft.WindowsDesktop.App 8.x の両方が必要です。これからダウンロードページを開きます。ランタイムをインストールしてから、もう一度このセットアップを実行してください。
 chinesesimp.MissingRuntimeMessage=PowerTray 需要 Microsoft .NET 8 Desktop Runtime x64，并且必须包含 Microsoft.NETCore.App 8.x 和 Microsoft.WindowsDesktop.App 8.x。现在会打开下载页面。请先安装运行时，然后重新运行此安装程序。
+english.RunningProcessPrompt=PowerTray is currently running. Do you want Setup to end the running PowerTray processes and continue?
+japanese.RunningProcessPrompt=PowerTray が実行中です。実行中の PowerTray プロセスを終了して、インストールを続行しますか？
+chinesesimp.RunningProcessPrompt=检测到正在运行的 PowerTray。是否结束其进程并继续安装？
+english.RunningProcessStopFailed=PowerTray is still running. Close it manually, then run Setup again.
+japanese.RunningProcessStopFailed=PowerTray がまだ実行中です。手動で終了してから、もう一度セットアップを実行してください。
+chinesesimp.RunningProcessStopFailed=PowerTray 仍在运行。请手动关闭后重新运行安装程序。
+english.RunningProcessCanceled=Installation was cancelled because PowerTray is still running.
+japanese.RunningProcessCanceled=PowerTray が実行中のため、インストールを中止しました。
+chinesesimp.RunningProcessCanceled=由于 PowerTray 仍在运行，安装已取消。
 
 [Tasks]
 Name: "autostart"; Description: "{cm:StartWithWindows}"
@@ -217,7 +226,10 @@ begin
 
   if RequestGracefulShutdown then
   begin
-    Exec(TargetPath, '--shutdown', ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    { Older PowerTray versions do not recognize --shutdown. Do not wait here:
+      after the brief grace period below, the path-scoped PowerShell cleanup
+      terminates only the installed executable if it is still running. }
+    Exec(TargetPath, '--shutdown', ExpandConstant('{app}'), SW_HIDE, ewNoWait, ResultCode);
     Sleep(2500);
   end;
 
@@ -248,13 +260,80 @@ begin
   DeleteFile(ScriptPath);
 end;
 
-function PrepareToInstall(var NeedsRestart: Boolean): String;
+function IsInstalledProcessRunning(ExeName: String): Boolean;
+var
+  TargetPath: String;
+  PowerShellPath: String;
+  ScriptPath: String;
+  Script: String;
+  ResultCode: Integer;
 begin
+  Result := False;
+  TargetPath := ExpandConstant('{app}\') + ExeName;
+  if not FileExists(TargetPath) then
+    Exit;
+
+  PowerShellPath := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
+  if not FileExists(PowerShellPath) then
+    Exit;
+
+  ScriptPath := ExpandConstant('{tmp}\PowerTrayCheckInstalledProcess.ps1');
+  Script :=
+    'param([string]$TargetPath,[string]$ProcessName)' + #13#10 +
+    '$expected = [IO.Path]::GetFullPath($TargetPath)' + #13#10 +
+    '$running = Get-Process -Name ([IO.Path]::GetFileNameWithoutExtension($ProcessName)) -ErrorAction SilentlyContinue | Where-Object {' + #13#10 +
+    '  try { $_.Path -and ([IO.Path]::GetFullPath($_.Path) -eq $expected) } catch { $false }' + #13#10 +
+    '}' + #13#10 +
+    'if ($running) { exit 1 }' + #13#10 +
+    'exit 0' + #13#10;
+  SaveStringToFile(ScriptPath, Script, False);
+  if Exec(
+    PowerShellPath,
+    '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + ScriptPath + '" "' + TargetPath + '" "' + ExeName + '"',
+    '',
+    SW_HIDE,
+    ewWaitUntilTerminated,
+    ResultCode
+  ) then
+    Result := ResultCode = 1;
+  DeleteFile(ScriptPath);
+end;
+
+function HasInstalledPowerTrayProcesses(): Boolean;
+begin
+  Result :=
+    IsInstalledProcessRunning('{#AppExeName}') or
+    IsInstalledProcessRunning('{#HidExeName}') or
+    IsInstalledProcessRunning('LGSTray.exe') or
+    IsInstalledProcessRunning('LGSTrayHID.exe');
+end;
+
+function ConfirmAndStopInstalledPowerTrayProcesses(): Boolean;
+begin
+  Result := True;
+  if not HasInstalledPowerTrayProcesses() then
+    Exit;
+
+  if MsgBox(ExpandConstant('{cm:RunningProcessPrompt}'), mbConfirmation, MB_YESNO) <> IDYES then
+  begin
+    Result := False;
+    Exit;
+  end;
+
   StopInstalledProcess('{#AppExeName}', True);
   StopInstalledProcess('{#HidExeName}', False);
   StopInstalledProcess('LGSTray.exe', False);
   StopInstalledProcess('LGSTrayHID.exe', False);
+  Result := not HasInstalledPowerTrayProcesses();
+  if not Result then
+    MsgBox(ExpandConstant('{cm:RunningProcessStopFailed}'), mbError, MB_OK);
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
   Result := '';
+  if not ConfirmAndStopInstalledPowerTrayProcesses() then
+    Result := ExpandConstant('{cm:RunningProcessCanceled}');
 end;
 
 function SelectedLanguageCode(): String;
@@ -347,8 +426,11 @@ procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usUninstall then
   begin
-    StopInstalledProcess('{#AppExeName}', True);
-    StopInstalledProcess('{#HidExeName}', False);
     RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'PowerTray');
   end;
+end;
+
+function InitializeUninstall(): Boolean;
+begin
+  Result := ConfirmAndStopInstalledPowerTrayProcesses();
 end;
