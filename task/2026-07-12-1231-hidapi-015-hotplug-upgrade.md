@@ -281,9 +281,12 @@ hidapi 0.15.0 稳定代码
 - `77097bb` (`Build reproducible hidapi and validate installers`)：固定源码/工具链/native build、ABI 门禁、shutdown 修复、RID lock、安装器编译与 smoke 结果；正式 hidapi DLL 未替换。
 - `9e3248f` (`Record PowerTray validation status`)：记录 blocked 硬件门禁、安装器 task 归档与实现提交。
 - `f7bafb5` (`Fix bidirectional native IPC`)：修复 UI/helper 单管道自连接问题，增加双向命名管道集成测试，并让 native 构建脚本在 PowerShell 5 下兼容且固定 SDK 10.0.26100.0。
+- `efa1ed2` (`Fix hidapi verification on Windows PowerShell`)：让 native export probe 与默认 DLL 路径在 Windows PowerShell 5 下可用。
+- `b6333b1` (`Fix tray tooltip theme consistency`)：每次打开前同步 PowerTray 当前调色板到每个设备 tooltip，并记录主机修复、测试与维护者实机确认。
 
 ## 设备同步
 
 - Windows VM102 `C:\dev\repos\logi\LGSTrayBattery-master` 已推送并验证为私有 `origin/main` `9e3248f`。
 - Ubuntu VM101 `~/src/repos/logi/LGSTrayBattery-master` tracked tree 干净，执行 `pull --ff-only` 后已验证 local/origin 均为 `9e3248f`。
 - 当前 Windows 物理机清单路径 `D:\dev\repos\logi\LGSTrayBattery-master` 在 VM102 不存在，无法从本设备检查或同步，记录为 `pending-device-sync`，不冒充已同步。
+- 当前 Windows 物理机已将 `efa1ed2` 与 `b6333b1` 推送到私有 `sync/main`；`git ls-remote` 复核 local HEAD 与 `sync/main` 均为 `b6333b1516aa61cbb426b8eb38e851eea5f83b66`，tracked/untracked worktree 均干净。公共 `origin` 未改动。
