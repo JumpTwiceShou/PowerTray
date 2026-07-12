@@ -1,10 +1,14 @@
 [CmdletBinding()]
 param(
-    [string]$BinaryPath = (Join-Path $PSScriptRoot 'hidapi.dll'),
+    [string]$BinaryPath,
     [string]$ExpectedSha256 = '38BDA32F593C054CACAF95BEBCE36F9BACC7FBD0740F7B6F72F6D368FBC84B4D'
 )
 
 $ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($BinaryPath)) {
+    $BinaryPath = Join-Path $PSScriptRoot 'hidapi.dll'
+}
+
 $requiredExports = @(
     'hid_init',
     'hid_exit',
@@ -36,17 +40,53 @@ if ($machine -ne 0x8664) {
     throw ('hidapi.dll is not Windows x64 PE32+. Machine: 0x{0:X4}.' -f $machine)
 }
 
-$handle = [Runtime.InteropServices.NativeLibrary]::Load((Resolve-Path -LiteralPath $BinaryPath))
+$probeType = 'PowerTray.HidapiExportProbe' -as [type]
+if ($null -eq $probeType) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+
+namespace PowerTray
+{
+    public static class HidapiExportProbe
+    {
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern IntPtr LoadLibrary(string fileName);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Ansi, SetLastError = true)]
+        public static extern IntPtr GetProcAddress(IntPtr module, string procedureName);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool FreeLibrary(IntPtr module);
+
+        public static IntPtr Load(string fileName)
+        {
+            IntPtr module = LoadLibrary(fileName);
+            if (module == IntPtr.Zero)
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Unable to load native dependency.");
+            }
+
+            return module;
+        }
+    }
+}
+'@
+    $probeType = [PowerTray.HidapiExportProbe]
+}
+
+$handle = $probeType::Load((Resolve-Path -LiteralPath $BinaryPath))
 try {
     foreach ($export in $requiredExports) {
-        $address = [IntPtr]::Zero
-        if (-not [Runtime.InteropServices.NativeLibrary]::TryGetExport($handle, $export, [ref]$address)) {
+        if ($probeType::GetProcAddress($handle, $export) -eq [IntPtr]::Zero) {
             throw "hidapi.dll is missing required export: $export"
         }
     }
 }
 finally {
-    [Runtime.InteropServices.NativeLibrary]::Free($handle)
+    [void]$probeType::FreeLibrary($handle)
 }
 
 $signature = Get-AuthenticodeSignature -LiteralPath $BinaryPath
