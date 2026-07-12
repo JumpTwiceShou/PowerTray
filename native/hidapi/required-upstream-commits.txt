@@ -1,0 +1,15 @@
+# Fixed upstream source and patch lineage used by PowerTray.
+# No local source patch is applied; every required change is already an ancestor
+# of 5360e03d6edcb7820eda3dd0fa1f8706e82e2600 in the official repository.
+
+d6b2a974608dec3b76fb1e36c189f22b9cf3650c  hidapi-0.15.0 release baseline
+1b0b6acce5505aaa66b550f648c7662a03a53f7e  hotplug callback API
+d0732cda906ad07b7e1ef93f1919035643620435  hid_read_timeout overlapped-event fix
+4f2e91bae80cc48e567a80bd9ae3dc53dc5b73c6  Windows HID string maximum 126 wchar
+ce923867993c55bc374ed99a4f384913af6495b4  Windows callback mutex
+b6606ca241e2e500638669141e21249865f8cc4a  missing LeaveCriticalSection fix
+da500c6ccdf0c6498b8aecd30517a53df3533c54  callback register/deregister deadlock fix
+5c4acf88a8695e52b1d9860b4d596c5ec53d83f6  synchronous WriteFile byte-count fix
+750bf201ae906eec1dc52c97087c8d0104c091ae  allocation and handle checks
+0ab6c14264ec76e9328a8eedb3b72b5d27dffd47  parameter sanity checks
+5360e03d6edcb7820eda3dd0fa1f8706e82e2600  Windows unplug handling and fixed build snapshot

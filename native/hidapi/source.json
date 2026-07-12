@@ -1,0 +1,9 @@
+{
+  "repository": "https://github.com/libusb/hidapi.git",
+  "archiveUrl": "https://github.com/libusb/hidapi/archive/5360e03d6edcb7820eda3dd0fa1f8706e82e2600.zip",
+  "commit": "5360e03d6edcb7820eda3dd0fa1f8706e82e2600",
+  "archiveSha256": "4DC06B08B90E07BA8D146847678792C454B78CB2B4E015AE88236891E5225048",
+  "releaseBaseline": "d6b2a974608dec3b76fb1e36c189f22b9cf3650c",
+  "releaseTag": "hidapi-0.15.0",
+  "localPatches": []
+}

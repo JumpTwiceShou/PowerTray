@@ -6,6 +6,7 @@ using LGSTrayUI;
 using LGSTrayPrimitives;
 using LGSTrayPrimitives.MessageStructs;
 using LGSTrayPrimitives.IPC;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 
 static void Assert(bool condition, string message)
@@ -51,6 +52,24 @@ static void TestBattery1001LookupBoundaries()
     Assert(Battery1001.LookupBatPercent(4186) == 100, "4186 mV should decode to 100% for Battery1001.");
     Assert(Battery1001.LookupBatPercent(3537) == 1, "The lowest Battery1001 LUT threshold should decode to 1%.");
     Assert(Battery1001.LookupBatPercent(3536) == 0, "Below the lowest Battery1001 LUT threshold should decode to 0%.");
+}
+
+static void TestHidDeviceInfoX64AbiLayout()
+{
+    Assert(Environment.Is64BitProcess, "Native HID ABI validation must run as x64.");
+    Assert(Marshal.SizeOf<HidDeviceInfo>() == 72, "hid_device_info must remain 72 bytes on Windows x64.");
+    Assert(Marshal.OffsetOf<HidDeviceInfo>("Path").ToInt32() == 0, "hid_device_info.path offset mismatch.");
+    Assert(Marshal.OffsetOf<HidDeviceInfo>("VendorId").ToInt32() == 8, "hid_device_info.vendor_id offset mismatch.");
+    Assert(Marshal.OffsetOf<HidDeviceInfo>("ProductId").ToInt32() == 10, "hid_device_info.product_id offset mismatch.");
+    Assert(Marshal.OffsetOf<HidDeviceInfo>("SerialNumber").ToInt32() == 16, "hid_device_info.serial_number offset mismatch.");
+    Assert(Marshal.OffsetOf<HidDeviceInfo>("ReleaseNumber").ToInt32() == 24, "hid_device_info.release_number offset mismatch.");
+    Assert(Marshal.OffsetOf<HidDeviceInfo>("ManufacturerString").ToInt32() == 32, "hid_device_info.manufacturer_string offset mismatch.");
+    Assert(Marshal.OffsetOf<HidDeviceInfo>("ProductString").ToInt32() == 40, "hid_device_info.product_string offset mismatch.");
+    Assert(Marshal.OffsetOf<HidDeviceInfo>("UsagePage").ToInt32() == 48, "hid_device_info.usage_page offset mismatch.");
+    Assert(Marshal.OffsetOf<HidDeviceInfo>("Usage").ToInt32() == 50, "hid_device_info.usage offset mismatch.");
+    Assert(Marshal.OffsetOf<HidDeviceInfo>("InterfaceNumber").ToInt32() == 52, "hid_device_info.interface_number offset mismatch.");
+    Assert(Marshal.OffsetOf<HidDeviceInfo>("Next").ToInt32() == 56, "hid_device_info.next offset mismatch.");
+    Assert(Marshal.OffsetOf<HidDeviceInfo>("BusType").ToInt32() == 64, "hid_device_info.bus_type offset mismatch.");
 }
 
 static void TestNativeIdentityDiagnosticsRedaction()
@@ -404,6 +423,7 @@ static void AssertThrows<TException>(Action action, string message) where TExcep
 TestXmlEscaping();
 TestBattery1F20Decode();
 TestBattery1001LookupBoundaries();
+TestHidDeviceInfoX64AbiLayout();
 TestNativeIdentityDiagnosticsRedaction();
 TestUpdaterAssetSelectionAndChecksum();
 TestHttpServerLoopbackFallback();

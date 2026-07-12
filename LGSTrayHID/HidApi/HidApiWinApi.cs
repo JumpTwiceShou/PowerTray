@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading.Tasks;
 
@@ -10,6 +11,7 @@ namespace LGSTrayHID.HidApi
     internal static partial class HidApiWinApi
     {
         [LibraryImport("hidapi", EntryPoint = "hid_winapi_get_container_id")]
+        [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
         private static unsafe partial int _HidWinApiGetContainerId(nint dev, Guid* container_id);
 
         internal static unsafe int HidWinApiGetContainerId(nint dev, out Guid container_id)

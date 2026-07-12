@@ -84,6 +84,7 @@ Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: 
 Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchAfterInstall}"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
+Type: files; Name: "{app}\installer-edition.txt"
 Type: dirifempty; Name: "{app}"
 Type: files; Name: "{autoprograms}\{#AppName}\{#AppName}.lnk"
 Type: dirifempty; Name: "{autoprograms}\{#AppName}"

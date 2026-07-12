@@ -2,7 +2,7 @@
 
 - Task ID: `2026-07-12-1231-hidapi-015-hotplug-upgrade`
 - 创建时间: `2026-07-12 12:31 +09:00`
-- 状态: `pending`
+- 状态: `blocked`
 - 优先级: `high`
 - 来源: `task/2026-07-12-1156-hidapi-provenance-and-update-key-backup.md`
 
@@ -55,77 +55,77 @@ hidapi 0.15.0 稳定代码
 
 ## 阶段 1：源码与补丁基线锁定
 
-- [ ] 获取官方 `libusb/hidapi` 仓库，确认 tag `hidapi-0.15.0` 指向 commit `d6b2a974608dec3b76fb1e36c189f22b9cf3650c`。
-- [ ] 检查官方 `connection-callback` 分支当前历史，列出 0.15.0 之后及与 Windows/hotplug 直接相关的 commits。
-- [ ] 确定最终构建基线，优先选择一个包含 0.15.0、hotplug API 和所有必要 Windows 修复的固定 commit，而不是浮动 branch HEAD。
-- [ ] 记录选择该 commit 的理由以及排除其他候选的理由。
-- [ ] 确认许可证、版权和再分发条件与 PowerTray GPL-3.0 兼容。
-- [ ] 保存 upstream commit、必要 patch 和来源 URL，不依赖未来可变化的远程 branch。
+- [x] 获取官方 `libusb/hidapi` 仓库，确认 tag `hidapi-0.15.0` 指向 commit `d6b2a974608dec3b76fb1e36c189f22b9cf3650c`。
+- [x] 检查官方 `connection-callback` 分支当前历史，列出 0.15.0 之后及与 Windows/hotplug 直接相关的 commits。
+- [x] 确定最终构建基线，优先选择一个包含 0.15.0、hotplug API 和所有必要 Windows 修复的固定 commit，而不是浮动 branch HEAD。
+- [x] 记录选择该 commit 的理由以及排除其他候选的理由。
+- [x] 确认许可证、版权和再分发条件与 PowerTray GPL-3.0 兼容。
+- [x] 保存 upstream commit、必要 patch 和来源 URL，不依赖未来可变化的远程 branch。
 
 ### 最低必须包含的修复
 
-- [ ] Windows hotplug callback mutex。
-- [ ] callback 内 register/deregister 的死锁修复。
-- [ ] `LeaveCriticalSection` 遗漏修复。
-- [ ] Windows device unplug handling 改进。
-- [ ] `hid_read_timeout()` overlapped-event 等待修复。
-- [ ] Windows synchronous `WriteFile` 返回长度修复。
-- [ ] Windows HID 字符串最大 126 wchar 修复。
-- [ ] 0.15.0 的参数、句柄和内存安全检查。
+- [x] Windows hotplug callback mutex。
+- [x] callback 内 register/deregister 的死锁修复。
+- [x] `LeaveCriticalSection` 遗漏修复。
+- [x] Windows device unplug handling 改进。
+- [x] `hid_read_timeout()` overlapped-event 等待修复。
+- [x] Windows synchronous `WriteFile` 返回长度修复。
+- [x] Windows HID 字符串最大 126 wchar 修复。
+- [x] 0.15.0 的参数、句柄和内存安全检查。
 
 ## 阶段 2：固定构建工具链
 
-- [ ] 安装或定位 Visual Studio Build Tools，并记录准确版本。
-- [ ] 记录 MSVC toolset 版本、Windows SDK 版本、CMake 版本和 generator。
-- [ ] 固定目标架构为 Windows x64 Release。
-- [ ] 确认动态 CRT/静态 CRT 选择与当前 PowerTray 分发方式兼容。
-- [ ] 确认 DLL 名称仍为 `hidapi.dll`，避免修改现有 P/Invoke library name。
-- [ ] 禁止在最终 DLL 中嵌入开发者本机绝对路径；如无法避免，记录原因并评估信息泄露。
-- [ ] 在仓库中加入独立 native build 目录、固定源码获取方式和一键构建脚本。
-- [ ] 构建脚本必须从干净目录开始，并在失败时 fail closed。
+- [x] 安装或定位 Visual Studio Build Tools，并记录准确版本。
+- [x] 记录 MSVC toolset 版本、Windows SDK 版本、CMake 版本和 generator。
+- [x] 固定目标架构为 Windows x64 Release。
+- [x] 确认动态 CRT/静态 CRT 选择与当前 PowerTray 分发方式兼容。
+- [x] 确认 DLL 名称仍为 `hidapi.dll`，避免修改现有 P/Invoke library name。
+- [x] 禁止在最终 DLL 中嵌入开发者本机绝对路径；如无法避免，记录原因并评估信息泄露。
+- [x] 在仓库中加入独立 native build 目录、固定源码获取方式和一键构建脚本。
+- [x] 构建脚本必须从干净目录开始，并在失败时 fail closed。
 
 ## 阶段 3：二进制与 ABI 验证
 
-- [ ] 构建 Windows x64 Release `hidapi.dll`。
-- [ ] 记录新 DLL SHA-256、文件版本、PE timestamp、linker version、大小和 Authenticode 状态。
-- [ ] 验证所有 PowerTray 当前使用的标准 hidapi exports 仍存在。
-- [ ] 验证以下 custom exports 存在且签名兼容：
-  - [ ] `hid_hotplug_register_callback`
-  - [ ] `hid_hotplug_deregister_callback`
-- [ ] 对照 `LGSTrayHID/HidApi/*.cs` 的 P/Invoke 声明逐项检查 calling convention、参数宽度、结构体布局和返回值。
-- [ ] 检查 `hid_device_info` 结构体在新版源码中是否变化。
-- [ ] 检查 `hid_winapi_get_container_id` 是否仍存在并保持兼容。
-- [ ] 在同一源码与同一工具链下执行至少两次 clean build，比较 SHA-256；若不一致，分析 PE timestamp、PDB、GUID 等非确定性来源。
-- [ ] 尽可能启用 deterministic/reproducible build；无法逐字节一致时，明确记录剩余非确定字段。
+- [x] 构建 Windows x64 Release `hidapi.dll`。
+- [x] 记录新 DLL SHA-256、文件版本、PE timestamp、linker version、大小和 Authenticode 状态。
+- [x] 验证所有 PowerTray 当前使用的标准 hidapi exports 仍存在。
+- [x] 验证以下 custom exports 存在且签名兼容：
+  - [x] `hid_hotplug_register_callback`
+  - [x] `hid_hotplug_deregister_callback`
+- [x] 对照 `LGSTrayHID/HidApi/*.cs` 的 P/Invoke 声明逐项检查 calling convention、参数宽度、结构体布局和返回值。
+- [x] 检查 `hid_device_info` 结构体在新版源码中是否变化。
+- [x] 检查 `hid_winapi_get_container_id` 是否仍存在并保持兼容。
+- [x] 在同一源码与同一工具链下执行至少两次 clean build，比较 SHA-256；若不一致，分析 PE timestamp、PDB、GUID 等非确定性来源。
+- [x] 尽可能启用 deterministic/reproducible build；无法逐字节一致时，明确记录剩余非确定字段。
 
 ## 阶段 4：PowerTray 代码适配
 
-- [ ] 将新 DLL 暂存为测试 artifact，不立即覆盖正式文件。
-- [ ] 使用独立测试输出运行 `verify-hidapi.ps1` 的扩展版验证。
-- [ ] 如新版错误 API 可用，评估是否将读取错误诊断接入 `NativeDiagnosticsStore`；不为了使用新 API 而扩大改动范围。
-- [ ] 检查 `hid_read_timeout()` 行为变化是否影响当前 reader loop、取消和关闭逻辑。
-- [ ] 检查 hotplug 回调线程上下文是否允许当前 C# callback 只做轻量排队。
-- [ ] 检查 callback deregistration 和 `HidppManagerContext.DisposeAsync` 的顺序。
+- [x] 将新 DLL 暂存为测试 artifact，不立即覆盖正式文件。
+- [x] 使用独立测试输出运行 `verify-hidapi.ps1` 的扩展版验证。
+- [x] 如新版错误 API 可用，评估是否将读取错误诊断接入 `NativeDiagnosticsStore`；不为了使用新 API 而扩大改动范围。
+- [x] 检查 `hid_read_timeout()` 行为变化是否影响当前 reader loop、取消和关闭逻辑。
+- [x] 检查 hotplug 回调线程上下文是否允许当前 C# callback 只做轻量排队。
+- [x] 检查 callback deregistration 和 `HidppManagerContext.DisposeAsync` 的顺序。
 - [ ] 仅在完成代码和 ABI 检查后替换 `LGSTrayHID/libhidapi/hidapi.dll`。
 - [ ] 更新 `verify-hidapi.ps1` 中固定 SHA-256 和 export 检查。
 - [ ] 更新 `LGSTrayHID/libhidapi/readme.md`，记录准确 commit、工具链、命令、flags 和产物证据。
 
 ## 阶段 5：自动化验证
 
-- [ ] `dotnet restore --locked-mode` 通过。
-- [ ] Debug build 通过，0 error。
-- [ ] Release build 通过，0 error。
-- [ ] `PowerTray.Tests` 全部通过。
-- [ ] 新 native build 脚本从干净目录成功构建。
+- [x] `dotnet restore --locked-mode` 通过。
+- [x] Debug build 通过，0 error。
+- [x] Release build 通过，0 error。
+- [x] `PowerTray.Tests` 全部通过。
+- [x] 新 native build 脚本从干净目录成功构建。
 - [ ] CI 中增加 native 来源/hash/export 验证；是否在 CI 内重新构建由耗时和工具链可用性决定。
 - [ ] `build-installer.ps1` 能携带新 DLL 完成 publish；安装器完整编译由安装器 task 管理。
-- [ ] `git diff --check` 通过。
+- [x] `git diff --check` 通过。
 
 ## 阶段 6：Windows 实机回归矩阵
 
 ### 基础检测
 
-- [ ] PowerTray 和 PowerTrayHID 正常启动，无 `EntryPointNotFoundException`、`BadImageFormatException` 或 native crash。
+- [x] PowerTray 和 PowerTrayHID 正常启动，无 `EntryPointNotFoundException`、`BadImageFormatException` 或 native crash。
 - [ ] G Pro Wireless Mouse 正常识别并读取电量。
 - [ ] Pro X 2 Lightspeed 正常识别并读取电量。
 - [ ] 设备名称、序列号、Unit ID、ContainerId 和持久化 identity 没有异常变化。
@@ -147,7 +147,7 @@ hidapi 0.15.0 稳定代码
 - [ ] 耳机断开充电线后继续正常读取无线电量。
 - [ ] 快速连续插拔至少 20 次，无死锁、崩溃、重复设备或失效 callback。
 - [ ] callback 内部触发 rediscover 时不发生死锁。
-- [ ] 应用关闭时 callback 正常注销，PowerTrayHID 无孤儿进程。
+- [x] 应用关闭时 callback 正常注销，PowerTrayHID 无孤儿进程。
 
 ### 资源与稳定性
 
@@ -187,3 +187,64 @@ hidapi 0.15.0 稳定代码
 - 热插拔产生死锁、重复设备、持续离线或高 CPU。
 - 无法固定源码和构建工具链。
 - 无法提供明确回滚路径。
+
+## 执行证据
+
+### 2026-07-12 阶段 1
+
+- 从 `https://github.com/libusb/hidapi.git` fetch 全部分支和 tags；annotated tag object 为 `dbff4ea89f55a572aeb0c53a7b32ea70853ec260`，解引用 `hidapi-0.15.0^{}` 后确认 commit 为 `d6b2a974608dec3b76fb1e36c189f22b9cf3650c`。
+- 检查 `origin/connection-callback` 的 first-parent 与路径历史：0.15.0 后合入 `19112a2`、`ec2cd2f`、`12a30f1`、`4398a7b` 四次 master，同分支 Windows/hotplug 直接修复包括 `ce92386`（callback mutex）、`b6606ca`（遗漏 `LeaveCriticalSection`）、`da500c6`（callback 内注销死锁）、`5360e03`（Windows 拔出处理）；当前分支 head `1889e9f` 另含 libusb callback 高 CPU 修复。
+- 固定最终 Windows 构建基线为官方 commit `5360e03d6edcb7820eda3dd0fa1f8706e82e2600`，不引用浮动分支名；`merge-base --is-ancestor` 已确认 0.15.0 commit、hotplug API 及 task 列出的全部 Windows 修复均在该快照内。
+- 选择理由：`5360e03` 是官方分支最后一个直接修改 Windows 拔出行为的 commit，并已包含 0.15.0 master 合并与全部所需 Windows/hotplug 修复。排除标准 `hidapi-0.15.0` 是因为缺少 hotplug exports；排除旧 `eea8cac` 是因为缺少后续修复；排除后续 `8bd8ff7`（仅 macOS）和 `1889e9f`（仅 libusb/macOS）是为了避免把与 Windows DLL 无关的改动扩大进固定基线。
+- 官方 `LICENSE.txt` 明确允许在 GPL-3.0、BSD-style 或 original HIDAPI license 中任选；PowerTray 选择 GPL-3.0 路径，与仓库许可证及 DLL 再分发兼容，构建快照将保留 upstream license 文件。
+- 新增 `native/hidapi/source.json`，固定 commit archive URL 及 archive SHA-256 `4DC06B08B90E07BA8D146847678792C454B78CB2B4E015AE88236891E5225048`；`required-upstream-commits.txt` 保存完整上游修复范围，`patches/README.md` 明确当前没有本地 patch。已逐项验证所有列出的 commit 均为固定基线祖先，构建不依赖 branch HEAD。
+- `ce923867993c55bc374ed99a4f384913af6495b4`（Windows hotplug callback mutex）为固定基线祖先。
+- `da500c6ccdf0c6498b8aecd30517a53df3533c54`（callback 内安全 deregister、避免死锁）为固定基线祖先。
+- `b6606ca241e2e500638669141e21249865f8cc4a`（补齐 `LeaveCriticalSection`）为固定基线祖先。
+- 固定基线 commit `5360e03d6edcb7820eda3dd0fa1f8706e82e2600` 本身即 Windows device unplug handling 改进。
+- `d0732cda906ad07b7e1ef93f1919035643620435`（`hid_read_timeout()` 不再额外等待 overlapped event）为固定基线祖先。
+- `5c4acf88a8695e52b1d9860b4d596c5ec53d83f6`（同步 `WriteFile` 返回实际字节数）为固定基线祖先。
+- `4f2e91bae80cc48e567a80bd9ae3dc53dc5b73c6`（Windows HID string buffer 最大 126 wchar）为固定基线祖先。
+- `750bf201ae906eec1dc52c97087c8d0104c091ae` 与 `0ab6c14264ec76e9328a8eedb3b72b5d27dffd47`（allocation/handle/argument sanity checks）均为固定基线祖先。
+
+### 2026-07-12 阶段 2
+
+- 当前 Codex 进程为 medium integrity，管理员组仅 `deny only`；非提升的 winget Build Tools 17.14.35 安装以 exit 1602 结束，复核确认未产生 VS instance 或 `vswhere.exe`。可见 elevated 安装需等待用户按 Windows UI 确认规则在 action time 明确确认，未把失败安装误记为完成。
+- CMake 使用 Kitware 官方 4.4.0 Windows x64 portable archive，下载 SHA-256 为 `156D70EB7625A7B469444DF7D0861D2AF8D5D0A437FCE32C350372B08F5620E8`，位置 `%USERPROFILE%\.codex\tools\cmake-4.4.0-windows-x86_64`；最终工具链清单将在 VS/MSVC/SDK 安装后整体记录。
+- `build-hidapi.ps1` 固定 generator `Visual Studio 17 2022`、architecture `x64`、configuration `Release`，不会根据宿主默认值选择架构或配置。
+- 当前正式 DLL 的 PE import table 仅包含 `KERNEL32.dll`，没有 `VCRUNTIME`/`MSVCP` runtime 依赖；新构建固定 `CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded`（`/MT` 静态 CRT），保持单 DLL 分发兼容性。
+- 固定源码 `windows/CMakeLists.txt` 对 `hidapi_winapi` 设置 `OUTPUT_NAME hidapi`；构建脚本只接受并复制唯一的 `hidapi.dll`，现有 `LibraryImport("hidapi")` 无需改名。
+- 新增独立 `native/hidapi/`：immutable source manifest、required upstream commit 清单、local patch policy、artifact ignore 规则及 `build-hidapi.ps1` 一键构建脚本；PowerShell parser 和 manifest/archive/ancestry 校验通过。
+- 脚本仅允许清理 `%TEMP%` 下的 build root，每次删除并重建 source/build 目录；CMake/VS 版本、source archive hash、SDK、command exit code 和唯一 DLL 选择任一不符合即抛错停止。实际 clean build 成功证据仍由阶段 3/5 单独验证，未提前勾选。
+- 用户在本轮明确同意安装；通过提权 winget 安装 Visual Studio Build Tools 2022 `17.14.35 (June 2026)`，installation version `17.14.37411.7`，绝对路径 `C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools`。安装主日志记录 `Completed install`，`vswhere` 显示 `isComplete=true`、`isLaunchable=true`、`isRebootRequired=false`，且 required-component 查询同时匹配 `Microsoft.VisualStudio.Component.VC.Tools.x86.x64` 与 `Microsoft.VisualStudio.Component.Windows11SDK.26100`。
+- 固定工具链实测为 MSVC toolset `14.44.35207`、`cl.exe` file version `19.44.35228.0`、Windows SDK `10.0.26100.0`、Kitware CMake `4.4.0`、generator `Visual Studio 17 2022`、architecture `x64`、configuration `Release`、static CRT `/MT`。安装器完成后遗留的 elevated winget wrapper 未自行退出；在 `vswhere` 完整状态及安装日志成功证据成立后终止该残留 wrapper，未中断任何 setup 子进程。
+- 安装后首次脚本执行在下载/配置前按 fail-closed 退出：原门槛错误地用展示版本 `17.14.35` 比较 `vswhere.installationVersion=17.14.37411.7`。脚本已改为精确固定 installation version `17.14.37411.7`；此项仅修正版本字段语义，clean native build 仍需后续单独通过后才能勾选。
+- 第二次脚本执行同样在 CMake 配置前 fail-closed：PowerShell 不支持原脚本使用的 `Select-Object -Single`。已改为对解压源码目录和构建出的 `hidapi.dll` 分别执行显式 `Count -eq 1` 检查，数量不唯一时仍立即抛错；前两次均未进入 native 编译，不计入两次 clean build 验证。
+- 修正上述两项后首次 native 编译成功，MSVC `19.44.35228.0`、SDK `10.0.26100.0` 生成测试 DLL SHA-256 `FA2477A9D3BAB60C3CE92DE9D51319F945BFFB95B5D16ED5027739A51BF22FD1`。编译器同时报告 `/pathmap` 需要 `/experimental:deterministic` 且原参数被忽略，因此该次仅作为工具链打通证据，不计入最终两次可复现 clean build；脚本已补齐 `/experimental:deterministic`，后续以最终 flags 重建。
+- 固定 commit 的 CMake configure 输出项目版本 `hidapi: v0.16.0`；这是 `connection-callback` 官方分支在包含 0.15.0 稳定提交及 task 所需后续修复后的版本元数据，不等同于、也未使用缺少 hotplug exports 的标准 0.15.0 预编译 DLL。
+
+### 2026-07-12 阶段 3/4 二进制与 ABI
+
+- 最终 flags 为 compiler `/O2 /Ob2 /DNDEBUG /Brepro /experimental:deterministic /pathmap:<clean-source>=hidapi`，linker `/INCREMENTAL:NO /OPT:REF /OPT:ICF /Brepro`，static CRT `/MT`。两个不同 `%TEMP%` clean root 分别完整下载、校验、解压、configure 和 build，均生成 SHA-256 `FA2477A9D3BAB60C3CE92DE9D51319F945BFFB95B5D16ED5027739A51BF22FD1`，大小 `173056` bytes，逐字节一致。
+- 新 DLL 为 PE32+ x64，file/product version `0.16.0`，PE reproducible timestamp field `0x9DA14B5F`，linker `14.44`，Authenticode `NotSigned`；import table 仅 `KERNEL32.dll`，没有 VCRUNTIME/MSVCP 动态 CRT 依赖。
+- `dumpbin /exports` 显示 30 个命名导出；PowerTray 当前验证的 12 个 required exports 全部存在，其中 `hid_hotplug_register_callback`、`hid_hotplug_deregister_callback` 与 `hid_winapi_get_container_id` 均存在。独立 artifact 运行扩展 `verify-hidapi.ps1` 通过：x64、固定 hash、12 exports、Authenticode 状态均符合门禁。
+- 用 binary string scan 检查 `C:\Users\jiang`、clean build root 名和固定 commit 源目录名均未命中；最终 DLL 未嵌入开发者绝对路径。MSBuild 关于 TEMP 不适合增量构建的 `MSB8029` 只针对工程目录；脚本每次强制 clean build，不使用增量产物。
+- C ABI 与 C# 声明逐项对照：Windows x64 的 `HID_API_CALL` 为空宏，所有 `LibraryImport` 和 callback delegate 显式 Cdecl；`unsigned short`→`ushort`、`size_t`→`nuint`、handle→`nint`、callback handle/flags/events/return→32-bit `int` 映射一致；`GUID*` 对应 `Guid*`。新版 `hid_device_info` 字段顺序未变化，x64 C# layout 仍为 72 bytes，既有 exact-offset 测试覆盖到 `bus_type`；`hid_winapi_get_container_id(hid_device*, GUID*) -> int` 未变化。
+- 新 DLL 与 `build-evidence.json` 已暂存到 ignored `native/hidapi/artifacts/` 作为测试 artifact；正式 `LGSTrayHID/libhidapi/hidapi.dll` 仍保持旧 hash `38BDA32F...B4D`，尚未替换。
+- 行为代码复核：`hid_read_timeout()` 的 `0` 仍仅继续 reader loop，`<0` 才进入既有失败/离线恢复；关闭时先取消 read token 并关闭 SafeHandle，使 reader 退出后再完成 session disposal。hotplug callback 不执行枚举或等待锁，只记录端点 hash/离线宽限并排队 rediscover；manager stop 先同步 deregister callback，再取消/等待后台任务，最后异步 dispose sessions。新版 `hid_read_error` 可提供更细错误文本，但当前错误恢复不依赖它，本轮不为可选诊断扩大 P/Invoke 与日志范围。
+
+### 2026-07-12 阶段 5 自动化验证（替换前）
+
+- `dotnet restore PowerTray.sln --locked-mode` 通过；Debug 和 Release solution build 均为 `0 warning / 0 error`；Release `PowerTray.Tests` 通过，其中 x64 `hid_device_info` 72-byte exact-offset ABI 测试通过。
+- native clean build、独立 artifact hash/export/architecture 验证已通过；正式 DLL 尚未替换，因此 installer publish 与最终 `verify-hidapi.ps1` 固定 hash 更新留到实机门禁之后。
+- 隔离 Debug runtime 用新 DLL 启动 `PowerTray` 与 `PowerTrayHID` 成功，HTTP 仅监听 `localhost:12321`，未出现 `EntryPointNotFoundException`、`BadImageFormatException` 或 native crash；但实时 PnP/CIM 中没有任何 `VID_046D` 设备，HTTP `/devices` 为空，因此两台 Logitech 的读取与 hotplug 项保持未勾选。
+- 第一次通过 `PowerTray.exe --shutdown` 退出时两个进程均消失且无孤儿，但 Application log 记录 UI `.NET Runtime 1026`：MessagePipe named-pipe receive loop 在 host stop 时把预期 `OperationCanceledException` 投递到 WPF Dispatcher。新增窄范围 shutdown guard：仅当 `IHostApplicationLifetime.ApplicationStopping` 已触发时，将 Dispatcher 上的 `OperationCanceledException` 标记 handled；其他时段和其他异常仍保持原错误处理。复测通过前不勾选优雅退出门禁。
+- shutdown guard 后重新执行 Debug build（`0 warning / 0 error`）与 `PowerTray.Tests` 均通过。隔离 UI runtime 携带新 DLL 后 `/health` 返回 HTTP 200；随后用同一 runtime 的 `PowerTray.exe --shutdown` 触发正式停止路径，`PowerTray`/`PowerTrayHID` 在 10 秒门限内全部退出、无孤儿进程，且该运行窗口内 Application log 没有新的 `.NET Runtime`、`Application Error` 或 `Windows Error Reporting` 事件。callback deregistration/host stop 门禁通过。
+- 当前 Windows VM 的 `Get-PnpDevice -PresentOnly` 与 `Win32_PnPEntity` 都没有 `VID_046D`，因此设备识别、电量、休眠、插拔、资源增长与 2 小时 smoke 仍等待 Logitech USB 设备接入；正式 DLL 保持旧稳定版本，不在硬件门禁缺失时替换。
+- 最终 scoped validation 再次通过：locked restore、Debug build、Release build 均成功且 `0 warning / 0 error`，`PowerTray.Tests`、正式旧 DLL x64/hash/12-export 验证与 `git diff --check` 通过。新 DLL 只存在 ignored test artifact；tracked tree 未替换正式二进制，installer task 使用旧稳定 DLL 完成并已归档。
+
+## 当前阻塞
+
+- Windows VM102 当前没有枚举到任何 `VID_046D` Logitech USB/PnP 设备，无法执行 G Pro Wireless Mouse、Pro X 2 Lightspeed、电量、休眠唤醒、充电线重枚举、20 次快速插拔和资源增长检查。
+- 2 小时普通使用 smoke 也必须在真实设备接入后进行。此前用户明确排除的 24 小时测试没有重新加入。
+- 在上述硬件门禁完成前，禁止把 `FA2477A9...22FD1` 替换为正式 `LGSTrayHID/libhidapi/hidapi.dll`；当前稳定 DLL 继续为 `38BDA32F...B4D`。本 task 保持 active/blocked，而非提前归档。

@@ -159,7 +159,7 @@ try {
 
     & (Join-Path $root "LGSTrayHID\libhidapi\verify-hidapi.ps1")
 
-    & $Dotnet restore (Join-Path $root "PowerTray.sln") --locked-mode
+    & $Dotnet restore (Join-Path $root "PowerTray.sln") --locked-mode --runtime win-x64
     if ($LASTEXITCODE -ne 0) {
         throw "dotnet restore --locked-mode failed with exit code $LASTEXITCODE."
     }

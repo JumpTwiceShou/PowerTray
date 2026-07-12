@@ -32,6 +32,7 @@ public partial class App : Application
     private RegisteredWaitHandle? _showSettingsRegistration;
     private EventWaitHandle? _shutdownEvent;
     private RegisteredWaitHandle? _shutdownRegistration;
+    private int _applicationStopping;
 
     protected override async void OnStartup(StartupEventArgs e)
     {
@@ -48,6 +49,7 @@ public partial class App : Application
         Thread.CurrentThread.CurrentCulture = CultureInfo.InvariantCulture;
         CultureInfo.DefaultThreadCurrentCulture = CultureInfo.InvariantCulture;
         AppDomain.CurrentDomain.UnhandledException += new UnhandledExceptionEventHandler(CrashHandler);
+        DispatcherUnhandledException += OnDispatcherUnhandledException;
 
         EnableEfficiencyMode();
 
@@ -86,7 +88,9 @@ public partial class App : Application
         ThemedMessageBox.Translate = key => loc[key];
         _ = host.Services.GetRequiredService<ThemeService>();
         RegisterShowSettingsSignal(host.Services.GetRequiredService<SettingsWindowFactory>());
-        RegisterShutdownSignal(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        IHostApplicationLifetime applicationLifetime = host.Services.GetRequiredService<IHostApplicationLifetime>();
+        applicationLifetime.ApplicationStopping.Register(() => Interlocked.Exchange(ref _applicationStopping, 1));
+        RegisterShutdownSignal(applicationLifetime);
 
         AppSettings runtimeSettings = host.Services.GetRequiredService<IOptions<AppSettings>>().Value;
         if (runtimeSettings.HTTPServer.Enabled && runtimeSettings.HTTPServer.RequiresAuthentication)
@@ -178,6 +182,14 @@ public partial class App : Application
             Timeout.Infinite,
             false
         );
+    }
+
+    private void OnDispatcherUnhandledException(object sender, System.Windows.Threading.DispatcherUnhandledExceptionEventArgs e)
+    {
+        if (Volatile.Read(ref _applicationStopping) == 1 && e.Exception is OperationCanceledException)
+        {
+            e.Handled = true;
+        }
     }
 
     private void CleanupSingleInstance()
