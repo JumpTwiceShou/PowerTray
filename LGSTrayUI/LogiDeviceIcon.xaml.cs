@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using System.Windows.Threading;
 
 namespace LGSTrayUI
@@ -167,8 +168,44 @@ namespace LGSTrayUI
                 return;
             }
 
+            ApplyTrayToolTipTheme(toolTip);
             toolTip.StaysOpen = false;
             ToolTipService.SetShowDuration(toolTip, 4000);
+        }
+
+        private void ApplyTrayToolTipTheme(ToolTip toolTip)
+        {
+            if (Application.Current == null)
+            {
+                return;
+            }
+
+            Brush? background = Application.Current.TryFindResource("TooltipBackgroundBrush") as Brush;
+            Brush? border = Application.Current.TryFindResource("BorderBrushSoft") as Brush;
+            Brush? foreground = Application.Current.TryFindResource("TextBrush") as Brush;
+
+            if (background != null)
+            {
+                trayToolTipBorder.Background = background;
+            }
+
+            if (border != null)
+            {
+                trayToolTipBorder.BorderBrush = border;
+            }
+
+            if (foreground != null)
+            {
+                trayToolTipText.Foreground = foreground;
+                toolTip.Foreground = foreground;
+            }
+
+            // Hardcodet creates a separate ToolTip wrapper for every tray icon. Remove
+            // its system-theme chrome so the PowerTray-themed content is the only surface.
+            toolTip.Background = Brushes.Transparent;
+            toolTip.BorderBrush = Brushes.Transparent;
+            toolTip.BorderThickness = new Thickness(0);
+            toolTip.Padding = new Thickness(0);
         }
 
         private void CloseTrayToolTip()
@@ -279,6 +316,19 @@ namespace LGSTrayUI
             if (e.PropertyName is nameof(CheckTheme.TaskbarLightTheme) or nameof(CheckTheme.TaskbarThemeSuffix))
             {
                 DrawBatteryIcon();
+            }
+
+            if (e.PropertyName is nameof(CheckTheme.LightTheme) or nameof(CheckTheme.ThemeMode))
+            {
+                _ = Dispatcher.BeginInvoke(() =>
+                {
+                    ToolTip? toolTip = taskbarIcon.TrayToolTipResolved;
+                    if (toolTip != null)
+                    {
+                        ApplyTrayToolTipTheme(toolTip);
+                        CloseTrayToolTip();
+                    }
+                });
             }
         }
 

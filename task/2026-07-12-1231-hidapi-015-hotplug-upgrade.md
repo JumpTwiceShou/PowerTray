@@ -107,6 +107,7 @@ hidapi 0.15.0 稳定代码
 - [x] 检查 `hid_read_timeout()` 行为变化是否影响当前 reader loop、取消和关闭逻辑。
 - [x] 检查 hotplug 回调线程上下文是否允许当前 C# callback 只做轻量排队。
 - [x] 检查 callback deregistration 和 `HidppManagerContext.DisposeAsync` 的顺序。
+- [x] 修复多个托盘设备提示框未统一跟随 PowerTray 主题的问题，并在深色/浅色主题下验证。
 - [ ] 仅在完成代码和 ABI 检查后替换 `LGSTrayHID/libhidapi/hidapi.dll`。
 - [ ] 更新 `verify-hidapi.ps1` 中固定 SHA-256 和 export 检查。
 - [ ] 更新 `LGSTrayHID/libhidapi/readme.md`，记录准确 commit、工具链、命令、flags 和产物证据。
@@ -249,6 +250,23 @@ hidapi 0.15.0 稳定代码
 - 2026-07-12 已将 `LGSTrayUI`、`LGSTrayHID`、Inno Setup 默认版本和 `build-installer.ps1` 默认版本统一从 `1.4.1` 提升至 `1.4.2`，并通过重新 restore 更新项目引用 lock file。
 - 此版本号仅表示下一版候选；在完整硬件门禁、安装器验证、发布说明确认和用户明确授权前，不创建公共 tag 或 GitHub Release。
 - `dotnet restore --locked-mode`、Debug/Release build、Release `PowerTray.Tests`、`build-installer.ps1` PowerShell 语法解析和 `git diff --check` 均通过；构建产物报告 `ProductVersion 1.4.2+2dd2582...`、`FileVersion 1.4.2.0`。
+
+### 2026-07-12 主 Windows 物理机启动检查与 SDK 复核
+
+- PowerTray 主工作树为 `main...sync/main`，`HEAD` 与 `sync/main` 均为 `3ee0a92efc102877a60eaae4c4b16bbe8a5f24cd`，无未提交改动；公共 `origin/main` 仍停在不同提交，按本任务边界不向其 push。
+- HomeLab 主工作树存在用户未提交的 `PROGRESS.md`、两份 runbook、一个 task 和未跟踪 `NUL`；本任务不改动、暂存或清理它们。
+- Windows SDK 的 winget/Windows Installer 注册显示 `Windows Software Development Kit - Windows 10.0.26100.7705`；实际检查确认 `Include`、`Lib`、`bin` 的 `10.0.26100.0` 目录和 `Lib\\10.0.26100.0\\um\\x64\\hid.lib`（12,004 bytes）均存在。最新官方 SDK setup 日志为 2026-07-12 15:43--15:44，bundle 与 Desktop Libs/Headers/Tools x64 均以 exit code `0x0` 结束。因此此前 SDK 缺件现象目前已消失，仍需用主机 native clean build 完成工具链验收。
+- `winget` 仍注册 `Microsoft.VisualStudio.2022.BuildTools` 17.14.35，但 `C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools` 缺失，Visual Studio setup 实例注册表也为空；Visual Studio Installer 目录存在但其中缺少 `vswhere.exe`。这与 SDK 已完整但 Build Tools 注册残留相矛盾，尚不能视为主机完整工具链修复；下一步通过可见管理员 Visual Studio Build Tools 安装/修复补齐固定组件，不删除其他 SDK。
+- 已通过正常 UAC 与可见 Microsoft Visual Studio Installer 执行 `modify --installPath C:\BuildTools --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --add Microsoft.VisualStudio.Component.Windows11SDK.26100 --passive --norestart`；installer exit code 为 `0`。此前 15:37 的错误为无效 `--wait` 参数（exit code `87`），本次不再包含该参数。修复后 `vswhere -requires` 对 VC x64 tools 和 Windows11SDK.26100 的联合查询均返回 `C:\BuildTools`，installation version `17.14.37411.7`、`isComplete=true`、`isLaunchable=true`、`isRebootRequired=false`。实际 VS instance 一直位于 `C:\BuildTools`，而不是默认 Program Files 路径；此前路径检查的假阴性已更正。
+- 主机使用已修复的固定工具链从全新 `%TEMP%` root 成功执行 `native/hidapi/build-hidapi.ps1`：源码 commit `5360e03d6edcb7820eda3dd0fa1f8706e82e2600`、archive SHA-256 `4DC06B08...5048`、Build Tools `17.14.37411.7`、MSVC toolset `14.44.35207`（`cl.exe` `19.44.35228.0`）、SDK `10.0.26100.0`、CMake `4.4.0`、VS 2022 x64 Release、`/MT`。产物 `native/hidapi/artifacts/host-20260712-1832/hidapi.dll` 为 x64 PE、173,056 bytes、SHA-256 `FA2477A9D3BAB60C3CE92DE9D51319F945BFFB95B5D16ED5027739A51BF22FD1`，与 VM102 固定产物一致；`dumpbin` 确认 linker `14.44`、三项关键 custom/Windows exports 存在、Authenticode 为预期 `NotSigned`。此前 ignored artifact 为不同的 170,496-byte hash `AF1C19...50FB`，未被覆盖或用作验证证据。
+- 实测发现 `LGSTrayHID/libhidapi/verify-hidapi.ps1` 的 `[Runtime.InteropServices.NativeLibrary]` 仅适用于 .NET Core，在本机默认 Windows PowerShell 5 中无法运行，阻断 installer gate。已改为使用受控 `LoadLibrary`/`GetProcAddress`/`FreeLibrary` P/Invoke probe；同时把依赖 `$PSScriptRoot` 的默认 DLL 路径移到参数绑定后解析，避免 Windows PowerShell 5 在默认参数表达式中得到空路径。PowerShell parser、显式候选 DLL（新 hash）和无参数正式 DLL（旧 hash）均通过 12 required exports、x64 PE 与 Authenticode `NotSigned` 验证。固定正式 hash 尚未改动。
+- `dotnet restore PowerTray.sln --locked-mode` 与全 solution Debug build 均在主机通过（`0 warning / 0 error`）。已创建隔离 Debug runtime `C:\Users\jiang\AppData\Local\Temp\PowerTray-1.4.2-hardware-20260712-1835`，其 `PowerTray.exe`/`PowerTrayHID.exe` 为 `1.4.2+3ee0a92...`，唯一 `hidapi.dll` 已替换为候选新 hash；当前正式 1.4.1 light 安装和 `%APPDATA%\PowerTray` 已完整备份至 `C:\Users\jiang\AppData\Local\Temp\PowerTray-1.4.2-validation-20260712-1835`。升级前正式状态为 version `1.4.1+1aa11403...`、FileVersion `1.4.1.0`、light、旧 DLL hash、autostart disabled。
+- 通过 PnP/CIM 实测到 C547、C54D 两个 LIGHTSPEED receiver 及 `0AF7` headset USB composite/interfaces；其中 receiver 下还暴露 keyboard/HID child interfaces，尚未将任一接收器作为热插拔目标，避免依产品名/PID猜测或误禁主输入。当前 1.4.1 UI 和 helper 仍正常运行，`/health` 返回 404（该旧安装尚未包含 1.4.2 health route）。
+- 尝试用已安装 1.4.1 的 `PowerTray.exe --shutdown` 正常退出，15 秒内 UI/helper 仍存活；检查对应 `origin/main` 源码确认 1.4.1 根本没有 `ShutdownEventName`/`--shutdown`，仅在托盘 Exit command 中调用 `Environment.Exit(0)`。为避免强杀 UI/helper 或留下 orphan，等待用户从托盘菜单正常选择 Exit；在此之前不启动会与旧实例共享 single-instance mutex 的隔离 1.4.2 runtime，也不进行 PnP disable/enable、DLL 正式替换或安装升级。
+- 用户随后报告已关闭，但实时复核仍显示旧 `PowerTray.exe` PID `31632`、`PowerTrayHID.exe` PID `27844` 均在运行，且 `127.0.0.1:12321` 仍由 PID `31632` 监听。因此并未执行托盘应用级 Exit（可能只关闭了 Settings 窗口）；继续保持 blocker，不强制结束进程。
+- 用户再次从托盘退出后，实时复核确认 `PowerTray.exe`、`PowerTrayHID.exe` 与端口 `12321` 监听均已消失，旧实例退出 blocker 已解除。用户同时提供同一深色主题下两个设备提示框一黑一白的截图，新增托盘提示框主题一致性修复与实机验证范围。
+- 托盘提示框不一致的根因是 Hardcodet 为每个设备单独创建外层 `ToolTip`，原实现只让内部内容使用 `DynamicResource`，因此外层系统 chrome 和不同创建时机的内容可能保留 Windows/旧主题。`LogiDeviceIcon` 现在在每次打开前从 `Application.Current` 读取 PowerTray 当前 `TooltipBackgroundBrush`、`BorderBrushSoft`、`TextBrush`，显式同步到命名的内容元素，并把外层 wrapper 设为透明、无边框、无 padding；PowerTray 主题变化时也会在 dispatcher 上刷新各设备实例并关闭旧 popup。
+- 主题修复后 `LGSTrayUI` Debug build 与 `PowerTray.Tests` Debug build 均为 `0 warning / 0 error`，`PowerTray.Tests passed`，`git diff --check` 无内容错误。修复后的隔离 `1.4.2+3ee0a92...` runtime 使用候选 hidapi SHA-256 `FA2477A9...22FD1` 启动，UI/helper 均从 `%LOCALAPPDATA%\Temp\PowerTray-1.4.2-hardware-20260712-1835` 运行；维护者随后实机检查并明确确认提示框主题问题已修复，按其要求停止额外视觉检查。
 
 ## 当前阻塞
 

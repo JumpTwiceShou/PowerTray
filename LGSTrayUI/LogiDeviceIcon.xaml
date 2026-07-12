@@ -13,14 +13,15 @@
                     ContextMenu="{StaticResource SysTrayMenu}">
         <tb:TaskbarIcon.TrayToolTip>
             <Grid>
-                <Border 
+                <Border x:Name="trayToolTipBorder"
                     BorderThickness="1"
                     CornerRadius="5"
                     BorderBrush="{DynamicResource BorderBrushSoft}"
                     Background="{DynamicResource TooltipBackgroundBrush}"
                     >
                     <StackPanel Margin="5">
-                        <TextBlock Text="{Binding Path=DisplayToolTipString}" 
+                        <TextBlock x:Name="trayToolTipText"
+                                   Text="{Binding Path=DisplayToolTipString}"
                                    Foreground="{DynamicResource TextBrush}"
                         />
                     </StackPanel>
