@@ -2,7 +2,7 @@
 
 - Task ID: `2026-07-12-1231-hidapi-015-hotplug-upgrade`
 - 创建时间: `2026-07-12 12:31 +09:00`
-- 状态: `in_progress`
+- 状态: `completed`
 - 优先级: `high`
 - 目标应用版本: `1.4.2`
 - 来源: `task/2026-07-12-1156-hidapi-provenance-and-update-key-backup.md`
@@ -309,3 +309,12 @@ hidapi 0.15.0 稳定代码
 - 2026-07-12 正式安装演练发现旧版 `1.4.1` 不识别 `--shutdown`，安装器原先以 `ewWaitUntilTerminated` 等待该子进程，导致后续的按路径清理永远无法执行。已改为不阻塞地发送 graceful shutdown，并在检测到当前安装目录的 PowerTray/helper 时，于安装和卸载前显示本地化“结束并继续 / 取消”选择；只有用户确认后才执行现有按完整路径限定的清理。Inno Setup 6.7.3 实际编译通过。此前卡住的安装器在尚未写入文件时已终止；需以此修复重新构建、签名、安装并验证。
 - 使用 Windows UI Automation 精确定位 PowerTray 的 `SystemTray.OmniButtonRight` 图标，并在坐标 `1800,1056` 实际发送一次右键按下/释放；托盘菜单成功打开，PowerTray PID `35760` 继续响应，验证窗口内无新的 `.NET Runtime`、`Application Error` 或 WER PowerTray 事件。右键闪退回归已通过端到端门禁；深色/浅色文字最终视觉仍由维护者确认，因此主题颜色项暂不勾选。
 - 维护者最新截图进一步确认：设置窗口明确为深色，但根托盘菜单和设备子菜单仍整体使用浅色，不只是设备文字。最终根因是 `TrayMenuResolved*` 默认浅色 brush 仍定义在 `NotifyIconResources.xaml` 自身 ResourceDictionary 中；该局部资源优先级高于 `Application.Current.Resources`，所以每次替换 application-level palette 都被局部浅色资源遮蔽。修复已删除全部局部 `TrayMenuResolved*` 定义，改由 `ThemeService.ApplyPalette` 在 application-level 一次性创建深/浅完整托盘调色板；根菜单、Header、动态设备项和 Popup 继续通过 `DynamicResource` 读取同一组 application keys。新增 `TestTrayMenuDictionaryDoesNotShadowApplicationPalette`，实际加载编译后的 `NotifyIconResources.xaml`，断言局部字典不再包含遮蔽 key，并确认暗色背景 `#181B21`、暗色文字 `#F3F4F6` 从应用资源解析成功。Debug build `0 warning / 0 error`、`PowerTray.Tests passed`；隔离 runtime 已替换为 DLL SHA-256 `8565E509...A5C`，`ThemeMode=dark`，UI/helper 正常响应且本次启动后无 PowerTray runtime error。等待维护者最终目视确认后再提交与勾选主题门禁。
+
+## 发布完成
+
+- 2026-07-12：维护者已确认主题切换后的托盘根菜单和设备子菜单显示正确；此前未做的接收器/充电线物理拔插、休眠唤醒、强制重扫、资源增长和两小时稳定性测试，按维护者明确决定豁免，不冒充已实测。
+- `v1.4.2` 发布提交为 `13fe371d00ca8b72865a4a63d615a1c62aa1eae9`。发布前的 locked restore、Release build（0 warning / 0 error）、Release `PowerTray.Tests`、正式 `hidapi.dll` 的 x64/12-export/SHA-256/Authenticode 验证与 `git diff --check` 均通过。
+- 正式轻量版已安装并运行：`PowerTray.exe` 报告 `1.4.2+13fe371d00ca8b72865a4a63d615a1c62aa1eae9`，`FileVersion 1.4.2.0`，`hidapi.dll` SHA-256 为 `FA2477A9D3BAB60C3CE92DE9D51319F945BFFB95B5D16ED5027739A51BF22FD1`。`http://localhost:12321/health` 返回 `running`、`restartCount=0`、`deviceCount=2`，并识别鼠标与耳机。HTTP 仅绑定 `localhost`；用 `127.0.0.1` 访问得到空响应不作为健康检查失败。
+- 安装器已修复运行中应用处理：检测到 `{app}` 内的 PowerTray/UI helper 时，安装和卸载会显示本地化“结束并继续 / 取消”选择；仅在用户确认后按完整路径结束进程。避免旧版不支持 `--shutdown` 时无限等待。Inno Setup 6.7.3 编译通过，最终签名轻量安装器 SHA-256 `3300315BAFC0995AA9682CCACA3D98520517D9BC749C03870EDEE28DA2F72F0F`，完整版 SHA-256 `135914D16B1441016CB19ED7E1B808C3E4668B41C29B15B973CB4C3642087F6B`；两份 SHA-256 签名均已验证。
+- 已推送公共 `origin/main` 和私有 `sync/main` 的发布标签 `v1.4.2`；两端标签均解析到 `13fe371d00ca8b72865a4a63d615a1c62aa1eae9`。公开 GitHub Release 已发布（非草稿、非 prerelease），包含轻量版/完整版及各自 `.sha256`、`.sha256.sig` 共 6 个资产，GitHub SHA-256 digest 与本地验证一致：<https://github.com/JumpTwiceShou/PowerTray/releases/tag/v1.4.2>。
+- Issue #4 原本即为 OPEN，无需重复恢复；已以维护者身份留言说明回复延迟源于工作繁忙、请报告者尝试 v1.4.2：<https://github.com/JumpTwiceShou/PowerTray/issues/4#issuecomment-4951416519>。
