@@ -6,7 +6,6 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Interop;
-using System.Windows.Media;
 
 namespace LGSTrayUI;
 
@@ -56,7 +55,7 @@ internal static class TrayContextMenuPlacement
             menu.IsOpen = false;
         }
 
-        ApplyCurrentTheme();
+        ApplyCurrentTheme(menu);
         CursorPlacementMetrics metrics = GetCursorPlacementMetrics();
         Size menuSize = MeasureMenu(menu);
         Point location = CalculateMenuLocation(metrics.Cursor, metrics.WorkArea, menuSize);
@@ -70,39 +69,20 @@ internal static class TrayContextMenuPlacement
         SetForegroundWindow(menu);
     }
 
-    private static void ApplyCurrentTheme()
+    private static void ApplyCurrentTheme(ContextMenu menu)
     {
         ThemeService.ApplyCurrentResources();
-        SyncResolvedBrush("TrayMenuResolvedBackgroundBrush", "MenuBackgroundBrush");
-        SyncResolvedBrush("TrayMenuResolvedBorderBrush", "BorderBrushSoft");
-        SyncResolvedBrush("TrayMenuResolvedForegroundBrush", "TextBrush");
-        SyncResolvedBrush("TrayMenuResolvedMutedBrush", "MutedTextBrush");
-        SyncResolvedBrush("TrayMenuResolvedHoverBrush", "MenuHoverBrush");
-        SyncResolvedBrush("TrayMenuResolvedSeparatorBrush", "MenuSeparatorBrush");
-        SyncResolvedBrush("TrayMenuResolvedDisabledBrush", "DisabledTextBrush");
-        SyncResolvedBrush("TrayMenuResolvedAccentBrush", "AccentBrush");
+        RefreshThemeResources(menu, CheckTheme.LightTheme);
     }
 
-    private static void SyncResolvedBrush(string targetKey, string sourceKey)
+    internal static void RefreshThemeResources(ContextMenu menu, bool light)
     {
-        Application? application = Application.Current;
-        if (application?.TryFindResource(sourceKey) is not SolidColorBrush source)
-        {
-            return;
-        }
-
-        ReplaceResolvedBrush(application.Resources, targetKey, source);
-    }
-
-    internal static void ReplaceResolvedBrush(
-        ResourceDictionary resources,
-        string targetKey,
-        SolidColorBrush source)
-    {
-        // XAML resources may be frozen even when declared as mutable. Replacing the
-        // application-level resource is safe; mutating the existing brush can crash
-        // the tray callback with InvalidOperationException.
-        resources[targetKey] = source.CloneCurrentValue();
+        // A ContextMenu and its submenus are hosted in popup windows. Keep a
+        // current palette on the live menu itself so their DynamicResource lookups
+        // do not retain the palette that was resolved when the popup was created.
+        // ApplyTrayMenuPalette always replaces resource entries; it never mutates
+        // a brush which WPF may have frozen.
+        ThemeService.ApplyTrayMenuPalette(menu.Resources, light);
     }
 
     private static Size MeasureMenu(ContextMenu menu)

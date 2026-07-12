@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$BinaryPath,
-    [string]$ExpectedSha256 = '38BDA32F593C054CACAF95BEBCE36F9BACC7FBD0740F7B6F72F6D368FBC84B4D'
+    [string]$ExpectedSha256 = 'FA2477A9D3BAB60C3CE92DE9D51319F945BFFB95B5D16ED5027739A51BF22FD1'
 )
 
 $ErrorActionPreference = 'Stop'

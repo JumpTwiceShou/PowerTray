@@ -108,6 +108,7 @@ public sealed class ThemeService
         Set(resources, "MenuHoverBrush", light ? "#E8EEF7" : "#252B34");
         Set(resources, "MenuSeparatorBrush", light ? "#E2E8F0" : "#343B46");
         Set(resources, "TooltipBackgroundBrush", light ? "#FFFFFF" : "#1B1F26");
+        ApplyTrayMenuPalette(resources, light);
 
         resources["ShadowColor"] = light ? Color.FromRgb(0x64, 0x74, 0x8B) : Color.FromRgb(0x00, 0x00, 0x00);
         resources["IsDarkTheme"] = !light;
@@ -120,6 +121,18 @@ public sealed class ThemeService
         resources[SystemColors.HighlightBrushKey] = resources["AccentBrush"];
         resources[SystemColors.HighlightTextBrushKey] = resources["NavigationSelectedTextBrush"];
         resources[SystemColors.GrayTextBrushKey] = resources["DisabledTextBrush"];
+    }
+
+    internal static void ApplyTrayMenuPalette(ResourceDictionary resources, bool light)
+    {
+        Set(resources, "TrayMenuResolvedBackgroundBrush", light ? "#FFFFFF" : "#181B21");
+        Set(resources, "TrayMenuResolvedBorderBrush", light ? "#D7DEE8" : "#343B46");
+        Set(resources, "TrayMenuResolvedForegroundBrush", light ? "#111827" : "#F3F4F6");
+        Set(resources, "TrayMenuResolvedMutedBrush", light ? "#5B6472" : "#A7AFBC");
+        Set(resources, "TrayMenuResolvedHoverBrush", light ? "#E8EEF7" : "#252B34");
+        Set(resources, "TrayMenuResolvedSeparatorBrush", light ? "#E2E8F0" : "#343B46");
+        Set(resources, "TrayMenuResolvedDisabledBrush", light ? "#9CA3AF" : "#6F7785");
+        Set(resources, "TrayMenuResolvedAccentBrush", light ? "#2563EB" : "#4F8CF7");
     }
 
     private static void ApplyTypography(string language, string uiScaleMode)

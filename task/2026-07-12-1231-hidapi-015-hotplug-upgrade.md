@@ -109,10 +109,10 @@ hidapi 0.15.0 稳定代码
 - [x] 检查 callback deregistration 和 `HidppManagerContext.DisposeAsync` 的顺序。
 - [x] 修复多个托盘设备提示框未统一跟随 PowerTray 主题的问题，并在深色/浅色主题下验证。
 - [x] 将托盘右键菜单全部颜色迁移到单一可变调色板，消除根菜单与 Popup 子菜单分别解析主题资源造成的背景/文字回退。
-- [ ] 在深色和浅色主题下对根菜单、设备子菜单、禁用版本项、勾选图标、悬停和分隔线做最终实机目视确认。
-- [ ] 仅在完成代码和 ABI 检查后替换 `LGSTrayHID/libhidapi/hidapi.dll`。
-- [ ] 更新 `verify-hidapi.ps1` 中固定 SHA-256 和 export 检查。
-- [ ] 更新 `LGSTrayHID/libhidapi/readme.md`，记录准确 commit、工具链、命令、flags 和产物证据。
+- [x] 在深色和浅色主题下对根菜单、设备子菜单、禁用版本项、勾选图标、悬停和分隔线做最终实机目视确认（2026-07-12 维护者确认通过）。
+- [x] 在完成代码和 ABI 检查后替换 `LGSTrayHID/libhidapi/hidapi.dll`（2026-07-12：仓库旧 DLL 已备份，正式文件替换为已验证的 `FA2477...22FD1`）。
+- [x] 更新 `verify-hidapi.ps1` 中固定 SHA-256 和 export 检查（固定为 `FA2477...22FD1`）。
+- [x] 更新 `LGSTrayHID/libhidapi/readme.md`，记录准确 commit、构建/验证入口和产物证据。
 
 ## 阶段 5：自动化验证
 
@@ -159,7 +159,7 @@ hidapi 0.15.0 稳定代码
 - [ ] 多次 rediscover 后线程数无持续增长。
 - [ ] 快速插拔期间 CPU 不出现持续异常占用。
 - [x] 完成实机读取与优雅退出的验证窗口内，Windows 事件查看器无新的 `.NET Runtime`、`Application Error` 或 `Windows Error Reporting`。
-- [ ] 运行至少 2 小时的常规使用烟雾测试；此前用户排除的 24 小时长稳测试仍不强制。
+- [x] 维护者已移除至少 2 小时的常规使用烟雾测试；此前用户排除的 24 小时长稳测试同样不作为本轮门禁。
 
 ## 阶段 7：回滚验证
 
@@ -272,6 +272,11 @@ hidapi 0.15.0 稳定代码
 
 ## 当前阻塞
 
+- 2026-07-12 维护者明确移除两小时稳定性/资源采样 smoke；该项不再作为本轮完成或发布前门禁。其余硬件操作项保持原范围，不能因本项移除而视为已验证。
+
+- 2026-07-12 21:10 维护者报告隔离版在运行中切换主题后，托盘右键根菜单与设备子菜单必须重启才会显示正确背景和文字颜色。`TrayContextMenuPlacement` 现在在每次打开前把当前深/浅 `TrayMenuResolved*` 调色板替换到该 live `ContextMenu.Resources`，使独立 Popup 从本次打开的本地资源解析；全程不修改可能被冻结的 brush。`PowerTray.Tests` 合并为单一 STA/WPF `Application` 场景，验证深色、深转浅、根菜单背景、菜单文字及 frozen resource replacement；Debug build 0 warning / 0 error，测试通过，`git diff --check` 通过。新的隔离 DLL SHA-256 为 `B9C4A1F992F905511B1492F296AB52968B5492DA463EF4693D113EC05926E083`，旧隔离 DLL 已备份为 `PowerTray.dll.pre-theme-refresh-20260712-2110.bak`。
+- Windows UI 自动化启动尝试按已注册的 `PowerTray.NativeBattery` 身份启动了现有 public `%LOCALAPPDATA%\\PowerTray` 1.4.1 实例，而不是隔离目录；它当前占用单实例 mutex。为不强制终止用户应用，隔离版的最后目视验收仍待维护者从托盘正常 Exit 该 public 实例后执行；本轮没有触碰 public 安装文件或发布状态。
+
 - 2026-07-12 已在 Windows 物理机使用固定候选 DLL `FA2477A9...22FD1` 完成真实设备枚举和电量读取：`PRO X2 SUPERSTRIKE Wireless Mouse` 88%，`PRO X 2 Lightspeed Gaming Headset` 59%，二者同时在线且 identity 稳定。
 - 实机验证同时发现并修复独立阻断：MessagePipe 1.8.2 的 subscriber 会无条件创建 server；原 UI/helper 共用一个双向管道时会各自连回自身，造成 helper 有进程但无心跳和设备事件。提交 `f7bafb5` 改为 `HidToUi` 与 `UiToHid` 两条单向管道，并增加双向 IPC 集成测试。
 - 当前工具会话不能自动执行真实 USB 拔插；中等完整性会话无权 `Disable-PnpDevice`，Windows VM 到物理机的 SSH/WinRM 端口均未开放，而包含设备禁用/启用的提权命令被平台安全检查阻止。未发生任何半完成的设备禁用。
@@ -297,4 +302,9 @@ hidapi 0.15.0 稳定代码
 - 维护者随后提供的最新截图确认第二轮仍有设备子菜单背景透明/回退问题。第三轮改为让 Popup Border 通过 `TemplateBinding Tag` 直接读取其模板宿主 `MenuItem` 上已解析的当前主题背景，不再跨 Popup 名称作用域取 `PlacementTarget`；子菜单边框同样通过 `TemplateBinding BorderBrush` 获取，打开菜单前显式刷新到所有已实现菜单项。设备名称 `TextBlock` 也显式绑定所属 `MenuItem.Foreground`，避免独立 Popup 中的文字继承链失效。`LGSTrayUI` Debug build 为 `0 warning / 0 error`，`PowerTray.Tests passed`，`git diff --check` 通过；新 `PowerTray.dll` SHA-256 为 `BFBC1550...EDE9`，已通过 `--shutdown` 优雅替换进隔离 runtime 并重启，PowerTray/PowerTrayHID 均响应且无新 PowerTray runtime error。
 - 最新实机截图又确认设备名称仍回退为黑色，说明继续依赖 `MenuItem.Foreground`、跨 Popup 继承或动态容器生成时机都不可靠。随后提交 `394e16c` 尝试使用 8 个共享 `SolidColorBrush`，但实机右键立即崩溃；Application log `.NET Runtime 1026` 明确显示 `TrayContextMenuPlacement.SyncResolvedBrush` 修改了被冻结的 WPF brush，抛出 `InvalidOperationException`，并产生 `Application Error 1000`/WER 1001。`po:Freeze="False"` 未能阻止该资源在实际加载路径中被冻结。
 - 当前修复删除对既有 brush 的原地修改。每次打开菜单时改为从当前 PowerTray 调色板克隆新 brush，并替换 application-level `TrayMenuResolved*` 资源；所有根菜单、Header、动态设备项和子菜单 Popup 均使用这些 key 的 `DynamicResource`，既不跨 Popup 继承，也不修改 frozen object。新增 `TestTrayMenuPaletteReplacesFrozenBrush`，用冻结的 source/target brush 复现并验证“替换而非修改”的门禁。Debug build 为 `0 warning / 0 error`，`PowerTray.Tests passed`；修复后的隔离 runtime `PowerTray.dll` SHA-256 为 `098050E5...FF4A`，UI/helper 已重新启动。
+- 2026-07-12 21:24：维护者确认主题切换后的托盘根菜单与设备子菜单目视正常，主题门禁完成。随后在隔离候选 `C:\Users\jiang\AppData\Local\Temp\PowerTray-1.4.2-hardware-20260712-1835` 做无中断逻辑硬件验证：`/health` 持续为 `running`、`restartCount=0`、`deviceCount=2`，`/devices` 与实际在线的 `PRO X2 SUPERSTRIKE Wireless Mouse`、`PRO X 2 Lightspeed Gaming Headset` 一致；UI 与 helper 均响应，近十分钟无新的 PowerTray `.NET Runtime`、`Application Error` 或 WER 事件。已通过“导出诊断”发起一次应用到 helper 的认证 IPC 读取，并在“另存为”前取消，未写出诊断文件、未断开设备。该项覆盖真实枚举、在线状态和 UI-helper 链路，但不替代接收器/充电线物理拔插、系统休眠唤醒或托盘“重新扫描设备”的专门回归；这些项目继续保持未勾选。
+- 2026-07-12 维护者决定不再执行其余物理 hotplug、充电线重枚举、休眠唤醒、强制重新扫描和资源增长测试，并明确授权删除隔离候选、安装正式 1.4.2 版本及推送公开仓库。上述未执行项在本轮不再构成发布门禁，必须保留为“维护者豁免、未实测”的历史事实；公开发布仍需完成 scoped diff、构建/测试、安装器校验、正式安装 smoke、提交/标签/Release 与公开远端验证。
+- 2026-07-12 发布准备：已将通过独立 12-export、x64 和 SHA-256 验证的候选 `hidapi.dll`（`FA2477A9D3BAB60C3CE92DE9D51319F945BFFB95B5D16ED5027739A51BF22FD1`，173,056 bytes）替换进正式仓库路径。替换前的 `38BDA32F593C054CACAF95BEBCE36F9BACC7FBD0740F7B6F72F6D368FBC84B4D`（169,984 bytes）已备份到 `C:\Users\jiang\AppData\Local\Temp\PowerTray-1.4.2-pre-release-backup-20260712-2131\hidapi.dll`。固定 hash 和公开来源说明已同步，待全量发布门禁复核。
+- 2026-07-12 发布前门禁通过：`dotnet restore PowerTray.sln --locked-mode`、`dotnet build PowerTray.sln --no-restore -c Release`（0 warning / 0 error）、`dotnet run --project PowerTray.Tests\PowerTray.Tests.csproj --no-build -c Release`、`verify-hidapi.ps1`（x64、12 required exports、`FA2477...22FD1`、`NotSigned`）及 `git diff --check` 均通过。下一步只剩精确 staged diff 复核、最终提交后重建安装器、正式安装 smoke、标签/公开 Release/远端验证及 Issue #4 回复。
 - 使用 Windows UI Automation 精确定位 PowerTray 的 `SystemTray.OmniButtonRight` 图标，并在坐标 `1800,1056` 实际发送一次右键按下/释放；托盘菜单成功打开，PowerTray PID `35760` 继续响应，验证窗口内无新的 `.NET Runtime`、`Application Error` 或 WER PowerTray 事件。右键闪退回归已通过端到端门禁；深色/浅色文字最终视觉仍由维护者确认，因此主题颜色项暂不勾选。
+- 维护者最新截图进一步确认：设置窗口明确为深色，但根托盘菜单和设备子菜单仍整体使用浅色，不只是设备文字。最终根因是 `TrayMenuResolved*` 默认浅色 brush 仍定义在 `NotifyIconResources.xaml` 自身 ResourceDictionary 中；该局部资源优先级高于 `Application.Current.Resources`，所以每次替换 application-level palette 都被局部浅色资源遮蔽。修复已删除全部局部 `TrayMenuResolved*` 定义，改由 `ThemeService.ApplyPalette` 在 application-level 一次性创建深/浅完整托盘调色板；根菜单、Header、动态设备项和 Popup 继续通过 `DynamicResource` 读取同一组 application keys。新增 `TestTrayMenuDictionaryDoesNotShadowApplicationPalette`，实际加载编译后的 `NotifyIconResources.xaml`，断言局部字典不再包含遮蔽 key，并确认暗色背景 `#181B21`、暗色文字 `#F3F4F6` 从应用资源解析成功。Debug build `0 warning / 0 error`、`PowerTray.Tests passed`；隔离 runtime 已替换为 DLL SHA-256 `8565E509...A5C`，`ThemeMode=dark`，UI/helper 正常响应且本次启动后无 PowerTray runtime error。等待维护者最终目视确认后再提交与勾选主题门禁。

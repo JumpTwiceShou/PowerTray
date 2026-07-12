@@ -11,6 +11,7 @@ using Microsoft.Extensions.DependencyInjection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
 
 static void Assert(bool condition, string message)
@@ -165,20 +166,94 @@ static void TestTrayToolTipSeparators()
     Assert(LogiDeviceViewModel.FormatToolTipDetail("Ｇ５０２", "39.00%") == "Ｇ５０２，39.00%", "Full-width tooltip separator should be a full-width comma.");
 }
 
-static void TestTrayMenuPaletteReplacesFrozenBrush()
+static void TestTrayMenuPaletteUsesApplicationThemeColors()
 {
     ResourceDictionary resources = new();
     SolidColorBrush frozenTarget = new(Colors.White);
     frozenTarget.Freeze();
-    SolidColorBrush frozenSource = new(Color.FromRgb(0x18, 0x1B, 0x21));
-    frozenSource.Freeze();
-    resources["target"] = frozenTarget;
+    resources["TrayMenuResolvedBackgroundBrush"] = frozenTarget;
 
-    TrayContextMenuPlacement.ReplaceResolvedBrush(resources, "target", frozenSource);
+    ThemeService.ApplyTrayMenuPalette(resources, light: false);
 
-    SolidColorBrush resolved = (SolidColorBrush)resources["target"];
-    Assert(!ReferenceEquals(resolved, frozenTarget), "Tray palette refresh must replace a frozen resource instead of mutating it.");
-    Assert(resolved.Color == frozenSource.Color, "Tray palette replacement must preserve the active theme color.");
+    SolidColorBrush darkBackground = (SolidColorBrush)resources["TrayMenuResolvedBackgroundBrush"];
+    SolidColorBrush darkForeground = (SolidColorBrush)resources["TrayMenuResolvedForegroundBrush"];
+    Assert(!ReferenceEquals(darkBackground, frozenTarget), "Tray palette refresh must replace a frozen resource instead of mutating it.");
+    Assert(darkBackground.Color == Color.FromRgb(0x18, 0x1B, 0x21), "Dark tray menu background must match the PowerTray dark palette.");
+    Assert(darkForeground.Color == Color.FromRgb(0xF3, 0xF4, 0xF6), "Dark tray menu text must match the PowerTray dark palette.");
+
+    ThemeService.ApplyTrayMenuPalette(resources, light: true);
+    SolidColorBrush lightBackground = (SolidColorBrush)resources["TrayMenuResolvedBackgroundBrush"];
+    SolidColorBrush lightForeground = (SolidColorBrush)resources["TrayMenuResolvedForegroundBrush"];
+    Assert(lightBackground.Color == Colors.White, "Light tray menu background must match the PowerTray light palette.");
+    Assert(lightForeground.Color == Color.FromRgb(0x11, 0x18, 0x27), "Light tray menu text must match the PowerTray light palette.");
+}
+
+static void TestTrayMenuDictionaryDoesNotShadowApplicationPalette()
+{
+    Exception? failure = null;
+    Thread thread = new(() =>
+    {
+        try
+        {
+            Application application = new();
+            ThemeService.ApplyTrayMenuPalette(application.Resources, light: false);
+            application.Resources["UIFontFamily"] = new FontFamily("Segoe UI");
+            application.Resources["UIMenuFontSize"] = 12.5;
+
+            ResourceDictionary dictionary = new()
+            {
+                Source = new Uri("/PowerTray;component/NotifyIconResources.xaml", UriKind.Relative),
+            };
+            application.Resources.MergedDictionaries.Add(dictionary);
+
+            Assert(!dictionary.Contains("TrayMenuResolvedBackgroundBrush"), "Tray resource dictionary must not shadow the application theme background.");
+            Assert(!dictionary.Contains("TrayMenuResolvedForegroundBrush"), "Tray resource dictionary must not shadow the application theme foreground.");
+
+            ContextMenu menu = (ContextMenu)dictionary["SysTrayMenu"];
+            SolidColorBrush background = (SolidColorBrush)menu.TryFindResource("TrayMenuResolvedBackgroundBrush");
+            SolidColorBrush foreground = (SolidColorBrush)menu.TryFindResource("TrayMenuResolvedForegroundBrush");
+            Assert(background.Color == Color.FromRgb(0x18, 0x1B, 0x21), "Tray menu must resolve the dark background from application resources.");
+            Assert(foreground.Color == Color.FromRgb(0xF3, 0xF4, 0xF6), "Tray menu must resolve the dark foreground from application resources.");
+
+            SolidColorBrush frozenBackground = new(Colors.White);
+            frozenBackground.Freeze();
+            menu.Resources["TrayMenuResolvedBackgroundBrush"] = frozenBackground;
+
+            TrayContextMenuPlacement.RefreshThemeResources(menu, light: false);
+            SolidColorBrush darkBackground = (SolidColorBrush)menu.TryFindResource("TrayMenuResolvedBackgroundBrush");
+            SolidColorBrush darkForeground = (SolidColorBrush)menu.TryFindResource("TrayMenuResolvedForegroundBrush");
+            MenuItem devicesMenu = (MenuItem)menu.Items[0];
+            menu.ApplyTemplate();
+            devicesMenu.ApplyTemplate();
+            Assert(!ReferenceEquals(darkBackground, frozenBackground), "Live tray menu palette refresh must replace a frozen popup resource.");
+            Assert(darkBackground.Color == Color.FromRgb(0x18, 0x1B, 0x21), "Live tray menu popup background must refresh to dark without a restart.");
+            Assert(darkForeground.Color == Color.FromRgb(0xF3, 0xF4, 0xF6), "Live tray menu popup text must refresh to dark without a restart.");
+            Assert(((SolidColorBrush)menu.Background).Color == darkBackground.Color, "Live tray menu root background must use the refreshed dark palette.");
+            Assert(((SolidColorBrush)devicesMenu.Foreground).Color == darkForeground.Color, "Live tray menu item text must use the refreshed dark palette.");
+
+            TrayContextMenuPlacement.RefreshThemeResources(menu, light: true);
+            SolidColorBrush lightBackground = (SolidColorBrush)menu.TryFindResource("TrayMenuResolvedBackgroundBrush");
+            SolidColorBrush lightForeground = (SolidColorBrush)menu.TryFindResource("TrayMenuResolvedForegroundBrush");
+            Assert(lightBackground.Color == Colors.White, "Live tray menu popup background must refresh to light without a restart.");
+            Assert(lightForeground.Color == Color.FromRgb(0x11, 0x18, 0x27), "Live tray menu popup text must refresh to light without a restart.");
+            Assert(((SolidColorBrush)menu.Background).Color == lightBackground.Color, "Live tray menu root background must update to light without a restart.");
+            Assert(((SolidColorBrush)devicesMenu.Foreground).Color == lightForeground.Color, "Live tray menu item text must update to light without a restart.");
+
+            application.Shutdown();
+        }
+        catch (Exception ex)
+        {
+            failure = ex;
+        }
+    });
+    thread.SetApartmentState(ApartmentState.STA);
+    thread.Start();
+    thread.Join();
+
+    if (failure != null)
+    {
+        throw new InvalidOperationException("Tray menu resource resolution test failed.", failure);
+    }
 }
 
 static async Task TestDeferredOfflineGateDelaysOffline()
@@ -488,7 +563,8 @@ TestNativeIdentityDiagnosticsRedaction();
 TestUpdaterAssetSelectionAndChecksum();
 TestHttpServerLoopbackFallback();
 TestTrayToolTipSeparators();
-TestTrayMenuPaletteReplacesFrozenBrush();
+TestTrayMenuPaletteUsesApplicationThemeColors();
+TestTrayMenuDictionaryDoesNotShadowApplicationPalette();
 await TestDeferredOfflineGateDelaysOffline();
 await TestDeferredOfflineGateCancelsOffline();
 TestDeferredOfflineGatePassesThroughOutsideGraceWindow();

@@ -4,19 +4,7 @@
                     xmlns:tb="http://www.hardcodet.net/taskbar">
     <BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter"/>
 
-    <!--
-      ContextMenu submenus live in separate Popup visual trees. Resolve the active
-      palette into application-level keys before every open so root and generated
-      submenu content share one consistent set of colors.
-    -->
-    <SolidColorBrush x:Key="TrayMenuResolvedBackgroundBrush" Color="#FFFFFF"/>
-    <SolidColorBrush x:Key="TrayMenuResolvedBorderBrush" Color="#D7DEE8"/>
-    <SolidColorBrush x:Key="TrayMenuResolvedForegroundBrush" Color="#111827"/>
-    <SolidColorBrush x:Key="TrayMenuResolvedMutedBrush" Color="#5B6472"/>
-    <SolidColorBrush x:Key="TrayMenuResolvedHoverBrush" Color="#E8EEF7"/>
-    <SolidColorBrush x:Key="TrayMenuResolvedSeparatorBrush" Color="#E2E8F0"/>
-    <SolidColorBrush x:Key="TrayMenuResolvedDisabledBrush" Color="#9CA3AF"/>
-    <SolidColorBrush x:Key="TrayMenuResolvedAccentBrush" Color="#3B82F6"/>
+    <!-- ThemeService seeds TrayMenuResolved* at application level; each live ContextMenu receives its current palette immediately before opening. -->
 
     <Style x:Key="TrayMenuItemStyle" TargetType="MenuItem">
         <Setter Property="Background" Value="Transparent"/>
