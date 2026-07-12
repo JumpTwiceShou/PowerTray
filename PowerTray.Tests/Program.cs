@@ -6,6 +6,8 @@ using LGSTrayUI;
 using LGSTrayPrimitives;
 using LGSTrayPrimitives.MessageStructs;
 using LGSTrayPrimitives.IPC;
+using MessagePipe;
+using Microsoft.Extensions.DependencyInjection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 
@@ -264,6 +266,46 @@ static void TestDiagnosticsPrivacyScope()
     Assert(json.Contains("groupKeyHash", StringComparison.OrdinalIgnoreCase), "Diagnostics should retain only a group-key hash.");
 }
 
+static async Task TestDirectionalNamedPipeIpcAsync()
+{
+    ServiceCollection uiServices = new();
+    uiServices.AddLGSMessagePipe(hostAsServer: true);
+    ServiceCollection hidServices = new();
+    hidServices.AddLGSMessagePipe(hostAsServer: false);
+
+    await using ServiceProvider uiProvider = uiServices.BuildServiceProvider();
+    await using ServiceProvider hidProvider = hidServices.BuildServiceProvider();
+
+    IDistributedSubscriber<IPCMessageType, IPCMessage> uiSubscriber =
+        uiProvider.GetRequiredService<IDistributedSubscriber<IPCMessageType, IPCMessage>>();
+    IDistributedPublisher<IPCMessageRequestType, IPCRequestMessage> uiPublisher =
+        uiProvider.GetRequiredService<IDistributedPublisher<IPCMessageRequestType, IPCRequestMessage>>();
+    IDistributedPublisher<IPCMessageType, IPCMessage> hidPublisher =
+        hidProvider.GetRequiredService<IDistributedPublisher<IPCMessageType, IPCMessage>>();
+    IDistributedSubscriber<IPCMessageRequestType, IPCRequestMessage> hidSubscriber =
+        hidProvider.GetRequiredService<IDistributedSubscriber<IPCMessageRequestType, IPCRequestMessage>>();
+
+    TaskCompletionSource<IPCMessage> heartbeatReceived = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    TaskCompletionSource<IPCRequestMessage> requestReceived = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    await using IAsyncDisposable messageSubscription = await uiSubscriber.SubscribeAsync(
+        IPCMessageType.HEARTBEAT,
+        message => heartbeatReceived.TrySetResult(message));
+    await using IAsyncDisposable requestSubscription = await hidSubscriber.SubscribeAsync(
+        IPCMessageRequestType.NATIVE_HEALTH_CHECK_REQUEST,
+        request => requestReceived.TrySetResult(request));
+
+    HeartbeatMessage heartbeat = new(1234, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, "running");
+    NativeHealthCheckRequestMessage request = new("directional-ipc-test");
+    await hidPublisher.PublishAsync(IPCMessageType.HEARTBEAT, heartbeat);
+    await uiPublisher.PublishAsync(IPCMessageRequestType.NATIVE_HEALTH_CHECK_REQUEST, request);
+
+    IPCMessage receivedHeartbeat = await heartbeatReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    IPCRequestMessage receivedRequest = await requestReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    Assert(receivedHeartbeat is HeartbeatMessage, "HID-to-UI messages must cross the dedicated named pipe.");
+    Assert(receivedRequest is NativeHealthCheckRequestMessage, "UI-to-HID requests must cross the dedicated named pipe.");
+}
+
 static void TestIpcSessionAuthentication()
 {
     IpcSessionContext.SetToken(new string('a', 64));
@@ -435,6 +477,7 @@ TestDeviceTransportPolicy();
 TestNativeSettingsValidation();
 TestCenturionFrameValidation();
 TestDiagnosticsPrivacyScope();
+await TestDirectionalNamedPipeIpcAsync();
 TestIpcSessionAuthentication();
 await TestUpdaterDetachedSignatureVerificationAsync();
 await TestUpdaterFileHashVerificationAsync();

@@ -1,15 +1,26 @@
 [CmdletBinding()]
 param(
-    [string]$OutputDirectory = (Join-Path $PSScriptRoot 'artifacts'),
-    [string]$BuildRoot = (Join-Path $env:TEMP 'powertray-hidapi-native-build'),
-    [string]$CMakePath = (Join-Path $HOME '.codex/tools/cmake-4.4.0-windows-x86_64/bin/cmake.exe')
+    [string]$OutputDirectory,
+    [string]$BuildRoot,
+    [string]$CMakePath
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
+    $OutputDirectory = Join-Path $PSScriptRoot 'artifacts'
+}
+if ([string]::IsNullOrWhiteSpace($BuildRoot)) {
+    $BuildRoot = Join-Path $env:TEMP 'powertray-hidapi-native-build'
+}
+if ([string]::IsNullOrWhiteSpace($CMakePath)) {
+    $CMakePath = Join-Path $HOME '.codex/tools/cmake-4.4.0-windows-x86_64/bin/cmake.exe'
+}
+
 $expectedCMakeVersion = '4.4.0'
 $expectedVsInstallationVersion = '17.14.37411.7'
+$expectedWindowsSdkVersion = '10.0.26100.0'
 $sourceManifestPath = Join-Path $PSScriptRoot 'source.json'
 $source = Get-Content -LiteralPath $sourceManifestPath -Raw | ConvertFrom-Json
 
@@ -56,13 +67,11 @@ $vsPath = [string]$vsInstall.installationPath
 $toolsetVersionFile = Join-Path $vsPath 'VC/Auxiliary/Build/Microsoft.VCToolsVersion.default.txt'
 $msvcToolsetVersion = (Get-Content -LiteralPath $toolsetVersionFile -Raw).Trim()
 $sdkRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits/10/Lib'
-$windowsSdkVersion = Get-ChildItem -LiteralPath $sdkRoot -Directory |
-    Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'um/x64/hid.lib') } |
-    Sort-Object { [Version]$_.Name } -Descending |
-    Select-Object -First 1 -ExpandProperty Name
-if (-not $windowsSdkVersion) {
-    throw 'No Windows SDK with x64 hid.lib was found.'
+$expectedSdkPath = Join-Path $sdkRoot $expectedWindowsSdkVersion
+if (-not (Test-Path -LiteralPath (Join-Path $expectedSdkPath 'um/x64/hid.lib') -PathType Leaf)) {
+    throw "Pinned Windows SDK not found: $expectedWindowsSdkVersion"
 }
+$windowsSdkVersion = $expectedWindowsSdkVersion
 
 if (Test-Path -LiteralPath $BuildRoot) {
     $resolvedBuildRoot = [IO.Path]::GetFullPath($BuildRoot)
@@ -138,6 +147,8 @@ $evidence = [ordered]@{
 }
 
 $evidencePath = Join-Path $OutputDirectory 'build-evidence.json'
-$evidence | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $evidencePath -Encoding utf8NoBOM
+$evidenceJson = $evidence | ConvertTo-Json -Depth 5
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+[System.IO.File]::WriteAllText($evidencePath, $evidenceJson + [Environment]::NewLine, $utf8NoBom)
 Write-Host "hidapi.dll: $($evidence.binarySha256)"
 Write-Host "Build evidence: $evidencePath"

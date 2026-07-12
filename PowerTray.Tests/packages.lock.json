@@ -465,6 +465,7 @@
         "dependencies": {
           "MessagePack": "[3.1.7, )",
           "MessagePipe.Interprocess": "[1.8.2, )",
+          "Microsoft.Extensions.DependencyInjection": "[8.0.0, )",
           "Microsoft.Extensions.DependencyInjection.Abstractions": "[8.0.0, )",
           "System.Text.Json": "[8.0.6, )"
         }
