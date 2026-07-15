@@ -12,6 +12,7 @@ using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 
 static void Assert(bool condition, string message)
@@ -225,6 +226,36 @@ static void TestTrayMenuDictionaryDoesNotShadowApplicationPalette()
             MenuItem devicesMenu = (MenuItem)menu.Items[0];
             menu.ApplyTemplate();
             devicesMenu.ApplyTemplate();
+            Assert(devicesMenu.MaxHeight == 112, "Tray device submenu must be capped at exactly four 28-DIP rows.");
+
+            ScrollViewer CreateDeviceScrollViewer(int itemCount)
+            {
+                MenuItem testMenu = new()
+                {
+                    Style = (Style)dictionary["TrayMenuItemStyle"],
+                    MaxHeight = devicesMenu.MaxHeight,
+                    ItemsSource = Enumerable.Range(1, itemCount).Select(index => $"Device {index}").ToArray(),
+                };
+                testMenu.ApplyTemplate();
+
+                return testMenu.Template.FindName("SubmenuScrollViewer", testMenu) as ScrollViewer
+                    ?? throw new InvalidOperationException("Tray submenu template must expose its scroll viewer for validation.");
+            }
+
+            for (int deviceCount = 0; deviceCount <= 4; deviceCount++)
+            {
+                ScrollViewer boundedDeviceScrollViewer = CreateDeviceScrollViewer(deviceCount);
+                Assert(boundedDeviceScrollViewer.MaxHeight == 112, "Tray submenu viewport must preserve the four-row height cap.");
+                Assert(boundedDeviceScrollViewer.VerticalScrollBarVisibility == ScrollBarVisibility.Disabled, $"{deviceCount} tray devices must not show or require a vertical scrollbar.");
+            }
+
+            ScrollViewer fiveDeviceScrollViewer = CreateDeviceScrollViewer(5);
+            Assert(fiveDeviceScrollViewer.VerticalScrollBarVisibility == ScrollBarVisibility.Auto, "Five tray devices must enable vertical scrolling when the viewport overflows.");
+
+            ScrollBar trayScrollBar = new() { Style = (Style)dictionary["TrayMenuScrollBarStyle"] };
+            Assert(trayScrollBar.Width == 9, "Tray submenu scrollbar must use the compact PowerTray width.");
+            Assert(object.ReferenceEquals(trayScrollBar.Template, dictionary["TrayMenuVerticalScrollBarTemplate"]), "Tray submenu scrollbar must use the custom arrowless template.");
+
             Assert(!ReferenceEquals(darkBackground, frozenBackground), "Live tray menu palette refresh must replace a frozen popup resource.");
             Assert(darkBackground.Color == Color.FromRgb(0x18, 0x1B, 0x21), "Live tray menu popup background must refresh to dark without a restart.");
             Assert(darkForeground.Color == Color.FromRgb(0xF3, 0xF4, 0xF6), "Live tray menu popup text must refresh to dark without a restart.");
