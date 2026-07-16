@@ -1,5 +1,7 @@
 # AGENTS.md - PowerTray
 
+<!-- homelab-project-initialization: complete -->
+
 ## Startup
 
 1. Read `~/.codex/SHARED_AGENT_RULES.md`.
