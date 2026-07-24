@@ -561,6 +561,158 @@ static void TestCenturionFrameValidation()
     AssertThrows<ArgumentOutOfRangeException>(() => CenturionFrameCodec.BuildFrame(CenturionFrameCodec.AddressedReportId, 1, new byte[61]), "Oversized addressed payloads must be rejected.");
 }
 
+static void TestCenturionConnectionNotificationDecode()
+{
+    const byte bridgeIndex = 0x03;
+    byte[] connected = CenturionFrameCodec.BuildFrame(
+        CenturionFrameCodec.ReportId,
+        null,
+        [bridgeIndex, 0x00, 0x00, 0x01]
+    );
+    Assert(
+        CenturionConnectionNotificationCodec.TryDecode(
+            connected,
+            CenturionFrameCodec.ReportId,
+            null,
+            bridgeIndex,
+            out CenturionConnectionState connectedState
+        ) && connectedState == CenturionConnectionState.Connected,
+        "A non-empty Centurion sub-device list should decode as connected."
+    );
+
+    byte[] disconnected = CenturionFrameCodec.BuildFrame(
+        CenturionFrameCodec.ReportId,
+        null,
+        [bridgeIndex, 0x00, 0x00, 0x00]
+    );
+    Assert(
+        CenturionConnectionNotificationCodec.TryDecode(
+            disconnected,
+            CenturionFrameCodec.ReportId,
+            null,
+            bridgeIndex,
+            out CenturionConnectionState disconnectedState
+        ) && disconnectedState == CenturionConnectionState.Disconnected,
+        "An empty Centurion sub-device list should decode as disconnected."
+    );
+
+    byte[] connectedWithType = CenturionFrameCodec.BuildFrame(
+        CenturionFrameCodec.ReportId,
+        null,
+        [bridgeIndex, 0x00, 0xA0, 0x02]
+    );
+    Assert(
+        CenturionConnectionNotificationCodec.TryDecode(
+            connectedWithType,
+            CenturionFrameCodec.ReportId,
+            null,
+            bridgeIndex,
+            out CenturionConnectionState typedState
+        ) && typedState == CenturionConnectionState.Connected,
+        "The connection type nibble should not alter the descriptor-list length."
+    );
+
+    byte[] wrongBridge = CenturionFrameCodec.BuildFrame(
+        CenturionFrameCodec.ReportId,
+        null,
+        [0x04, 0x00, 0x00, 0x01]
+    );
+    Assert(
+        !CenturionConnectionNotificationCodec.TryDecode(
+            wrongBridge,
+            CenturionFrameCodec.ReportId,
+            null,
+            bridgeIndex,
+            out _
+        ),
+        "A notification for another bridge must be rejected."
+    );
+
+    byte[] response = CenturionFrameCodec.BuildFrame(
+        CenturionFrameCodec.ReportId,
+        null,
+        [bridgeIndex, 0x01, 0x00, 0x01]
+    );
+    Assert(
+        !CenturionConnectionNotificationCodec.TryDecode(
+            response,
+            CenturionFrameCodec.ReportId,
+            null,
+            bridgeIndex,
+            out _
+        ),
+        "A non-zero software id must not be treated as an unsolicited notification."
+    );
+
+    byte[] addressed = CenturionFrameCodec.BuildFrame(
+        CenturionFrameCodec.AddressedReportId,
+        0x2A,
+        [bridgeIndex, 0x00, 0x00, 0x01]
+    );
+    Assert(
+        CenturionConnectionNotificationCodec.TryDecode(
+            addressed,
+            CenturionFrameCodec.AddressedReportId,
+            0x2A,
+            bridgeIndex,
+            out CenturionConnectionState addressedState
+        ) && addressedState == CenturionConnectionState.Connected,
+        "An addressed notification should require and accept the active address."
+    );
+    Assert(
+        !CenturionConnectionNotificationCodec.TryDecode(
+            addressed,
+            CenturionFrameCodec.AddressedReportId,
+            0x2B,
+            bridgeIndex,
+            out _
+        ),
+        "An addressed notification for another device address must be rejected."
+    );
+    Assert(
+        !CenturionConnectionNotificationCodec.TryDecode(
+            connected,
+            CenturionFrameCodec.AddressedReportId,
+            null,
+            bridgeIndex,
+            out _
+        ),
+        "A notification using another report id must be rejected."
+    );
+
+    byte[] wrongFunction = CenturionFrameCodec.BuildFrame(
+        CenturionFrameCodec.ReportId,
+        null,
+        [bridgeIndex, 0x10, 0x00, 0x01]
+    );
+    Assert(
+        !CenturionConnectionNotificationCodec.TryDecode(
+            wrongFunction,
+            CenturionFrameCodec.ReportId,
+            null,
+            bridgeIndex,
+            out _
+        ),
+        "A non-connection Centurion event must be rejected."
+    );
+
+    byte[] shortPayload = CenturionFrameCodec.BuildFrame(
+        CenturionFrameCodec.ReportId,
+        null,
+        [bridgeIndex, 0x00, 0x00]
+    );
+    Assert(
+        !CenturionConnectionNotificationCodec.TryDecode(
+            shortPayload,
+            CenturionFrameCodec.ReportId,
+            null,
+            bridgeIndex,
+            out _
+        ),
+        "A truncated connection notification must be rejected."
+    );
+}
+
 static void TestDiagnosticsPrivacyScope()
 {
     Guid containerId = Guid.Parse("00112233-4455-6677-8899-aabbccddeeff");
@@ -796,6 +948,7 @@ TestHidSessionRecoveryPolicy();
 TestDeviceTransportPolicy();
 TestNativeSettingsValidation();
 TestCenturionFrameValidation();
+TestCenturionConnectionNotificationDecode();
 TestDiagnosticsPrivacyScope();
 await TestDirectionalNamedPipeIpcAsync();
 TestIpcSessionAuthentication();

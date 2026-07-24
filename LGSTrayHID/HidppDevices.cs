@@ -54,6 +54,13 @@ namespace LGSTrayHID
             TimeSpan.FromMilliseconds(2500),
             TimeSpan.FromMilliseconds(5000),
         ];
+        private static readonly TimeSpan[] CenturionOnlineRecoveryDelays =
+        [
+            TimeSpan.FromMilliseconds(150),
+            TimeSpan.FromMilliseconds(600),
+            TimeSpan.FromMilliseconds(1500),
+            TimeSpan.FromMilliseconds(3000),
+        ];
 
         private readonly HidEndpointInfo _shortEndpoint;
         private readonly HidEndpointInfo? _longEndpoint;
@@ -70,6 +77,7 @@ namespace LGSTrayHID
         private readonly List<Task> _backgroundTasks = [];
         private readonly HashSet<string> _knownDeviceIds = [];
         private readonly SemaphoreSlim _commandSemaphore = new(1, 1);
+        private readonly SemaphoreSlim _centurionCommandSemaphore = new(1, 1);
         private readonly Channel<byte[]> _channel = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(256)
         {
             FullMode = BoundedChannelFullMode.Wait,
@@ -86,6 +94,10 @@ namespace LGSTrayHID
         private byte _centurionSwId = 0x01;
         private byte _centurionReportId = CENTURION_REPORT_ID;
         private byte? _centurionDeviceAddress;
+        private byte? _centurionBridgeIndex;
+        private string? _centurionDeviceId;
+        private CenturionConnectionState? _centurionConnectionState;
+        private long _centurionConnectionGeneration;
         private int _centurionProbeAttempts;
         private readonly HashSet<string> _offlineSignalledDeviceIds = [];
         private readonly Dictionary<string, int> _centurionFailureCounts = [];
@@ -380,6 +392,7 @@ namespace LGSTrayHID
             _readCts = null;
             _lifetimeCts.Dispose();
             _commandSemaphore.Dispose();
+            _centurionCommandSemaphore.Dispose();
         }
 
         internal void TrackBackgroundTask(Task task)
@@ -491,6 +504,11 @@ namespace LGSTrayHID
                     _shortEndpoint.PathHash,
                     buffer
                 );
+
+                if (TryHandleCenturionConnectionNotification(buffer))
+                {
+                    return;
+                }
             }
 
             if (buffer.Length < 4)
@@ -515,6 +533,140 @@ namespace LGSTrayHID
             if (!_channel.Writer.TryWrite(buffer) && !Disposed)
             {
                 NativeDiagnosticsStore.RecordError("HID response channel rejected a response.");
+            }
+        }
+
+        private bool TryHandleCenturionConnectionNotification(byte[] buffer)
+        {
+            CenturionConnectionState state;
+            CenturionConnectionState? previousState;
+            long generation;
+            string? deviceId;
+            lock (_centurionPresenceSync)
+            {
+                if (!_centurionBridgeIndex.HasValue ||
+                    !CenturionConnectionNotificationCodec.TryDecode(
+                        buffer,
+                        _centurionReportId,
+                        _centurionDeviceAddress,
+                        _centurionBridgeIndex.Value,
+                        out state
+                    ))
+                {
+                    return false;
+                }
+
+                previousState = _centurionConnectionState;
+                _centurionConnectionState = state;
+                generation = previousState == state
+                    ? _centurionConnectionGeneration
+                    : ++_centurionConnectionGeneration;
+                deviceId = _centurionDeviceId ?? _centurionPresenceTarget?.DeviceId;
+            }
+
+            NativeDiagnosticsStore.AddEvent(
+                $"{NativeDiagnosticsStore.FormatHex(_shortEndpoint.ProductId, 4)}: Centurion connection notification state={state.ToString().ToLowerInvariant()} bridge={NativeDiagnosticsStore.FormatHex(_centurionBridgeIndex!.Value, 2)}"
+            );
+
+            if (state == CenturionConnectionState.Disconnected)
+            {
+                if (previousState != CenturionConnectionState.Disconnected &&
+                    !string.IsNullOrWhiteSpace(deviceId))
+                {
+                    SignalOffline(deviceId, bypassDeferral: true);
+                }
+                return true;
+            }
+
+            if (previousState != CenturionConnectionState.Connected)
+            {
+                Task recoveryTask = RecoverCenturionOnlineAsync(generation);
+                TrackBackgroundTask(recoveryTask);
+            }
+            return true;
+        }
+
+        private async Task RecoverCenturionOnlineAsync(long generation)
+        {
+            foreach (TimeSpan delay in CenturionOnlineRecoveryDelays)
+            {
+                try
+                {
+                    await Task.Delay(delay, _lifetimeCts.Token);
+                    if (!IsCurrentCenturionConnection(generation, CenturionConnectionState.Connected))
+                    {
+                        return;
+                    }
+
+                    CenturionPresenceTarget? target;
+                    lock (_centurionPresenceSync)
+                    {
+                        target = _centurionPresenceTarget;
+                    }
+
+                    if (target == null)
+                    {
+                        _ = await TryDiscoverCenturionAsync();
+                        if (!IsCurrentCenturionConnection(generation, CenturionConnectionState.Connected))
+                        {
+                            return;
+                        }
+
+                        lock (_centurionPresenceSync)
+                        {
+                            target = _centurionPresenceTarget;
+                        }
+                    }
+
+                    if (target == null)
+                    {
+                        continue;
+                    }
+
+                    UpdateMessage? update = await CreateCenturionBatteryUpdateAsync(
+                        target.DeviceId,
+                        target.Features,
+                        target.Request
+                    );
+                    if (update == null ||
+                        !IsCurrentCenturionConnection(generation, CenturionConnectionState.Connected))
+                    {
+                        continue;
+                    }
+
+                    ResetCenturionTransportFailures(target.DeviceId);
+                    HidppManagerContext.Instance.SignalDeviceEvent(IPCMessageType.UPDATE, update);
+                    NativeDiagnosticsStore.AddEvent(
+                        $"{NativeDiagnosticsStore.FormatHex(_shortEndpoint.ProductId, 4)}: Centurion online confirmed by fresh battery response"
+                    );
+                    return;
+                }
+                catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    NativeDiagnosticsStore.RecordError(
+                        $"Centurion online recovery failed: {ex.GetType().Name}: {ex.Message}"
+                    );
+                }
+            }
+
+            if (IsCurrentCenturionConnection(generation, CenturionConnectionState.Connected))
+            {
+                NativeDiagnosticsStore.AddEvent(
+                    $"{NativeDiagnosticsStore.FormatHex(_shortEndpoint.ProductId, 4)}: Centurion online notification was not confirmed; presence probing remains active"
+                );
+            }
+        }
+
+        private bool IsCurrentCenturionConnection(long generation, CenturionConnectionState state)
+        {
+            lock (_centurionPresenceSync)
+            {
+                return _centurionConnectionGeneration == generation &&
+                    _centurionConnectionState == state;
             }
         }
 
@@ -830,6 +982,10 @@ namespace LGSTrayHID
             });
             if (dongleFeatures.TryGetValue(0x0003, out byte bridgeIndex))
             {
+                lock (_centurionPresenceSync)
+                {
+                    _centurionBridgeIndex = bridgeIndex;
+                }
                 Dictionary<ushort, byte> headsetFeatures = await DiscoverCenturionFeaturesAsync((featureIndex, function, parameters, self) =>
                     self.CenturionBridgeRequestAsync(bridgeIndex, featureIndex, function, parameters)
                 );
@@ -895,8 +1051,15 @@ namespace LGSTrayHID
             }
             string deviceId = $"centurion-{serial}";
             bool hasBattery = features.ContainsKey(0x0104);
+            bool requireFreshResponse;
             lock (_centurionPresenceSync)
             {
+                if (_centurionConnectionState == CenturionConnectionState.Disconnected)
+                {
+                    return true;
+                }
+
+                _centurionDeviceId = deviceId;
                 _centurionPresenceTarget = hasBattery
                     ? new CenturionPresenceTarget(
                         deviceId,
@@ -904,17 +1067,37 @@ namespace LGSTrayHID
                         request
                     )
                     : null;
+                requireFreshResponse = _centurionConnectionState == CenturionConnectionState.Connected;
             }
 
             RecordDeviceDiscovery("0xFF", name, DeviceType.Headset, deviceId, features, "0x0104", null);
-            HidppManagerContext.Instance.SignalDeviceEvent(
-                IPCMessageType.INIT,
-                new InitMessage(deviceId, name, hasBattery, DeviceType.Headset)
-            );
-            RegisterKnownDevice(deviceId);
 
             UpdateMessage? initialBattery = null;
-            if (hasBattery)
+            if (hasBattery && requireFreshResponse)
+            {
+                initialBattery = await CreateCenturionBatteryUpdateAsync(deviceId, features, request);
+                if (initialBattery == null)
+                {
+                    AddFailure("batteryReadFailed");
+                    return true;
+                }
+            }
+
+            lock (_centurionPresenceSync)
+            {
+                if (_centurionConnectionState == CenturionConnectionState.Disconnected)
+                {
+                    return true;
+                }
+
+                HidppManagerContext.Instance.SignalDeviceEvent(
+                    IPCMessageType.INIT,
+                    new InitMessage(deviceId, name, hasBattery, DeviceType.Headset)
+                );
+                RegisterKnownDevice(deviceId);
+            }
+
+            if (hasBattery && !requireFreshResponse)
             {
                 initialBattery = await CreateCenturionBatteryUpdateAsync(deviceId, features, request);
                 if (initialBattery == null)
@@ -922,14 +1105,20 @@ namespace LGSTrayHID
                     AddFailure("batteryReadFailed");
                 }
             }
-            else
+            else if (!hasBattery)
             {
                 AddFailure("batteryFeatureMissing");
             }
 
-            if (initialBattery != null)
+            bool stillConnected;
+            lock (_centurionPresenceSync)
+            {
+                stillConnected = _centurionConnectionState != CenturionConnectionState.Disconnected;
+            }
+            if (initialBattery != null && stillConnected)
             {
                 RecordDeviceDiscovery("0xFF", name, DeviceType.Headset, deviceId, features, "0x0104", initialBattery.batteryPercentage.ToString("0.##"));
+                ResetCenturionTransportFailures(deviceId);
                 HidppManagerContext.Instance.SignalDeviceEvent(IPCMessageType.UPDATE, initialBattery);
             }
 
@@ -1286,101 +1475,140 @@ namespace LGSTrayHID
                 return false;
             }
 
-            byte[] payload = [0x00, 0x10, 0x00, 0x00, 0x00];
-            for (int address = 0; address <= byte.MaxValue && !Disposed; address++)
+            bool locked = await _centurionCommandSemaphore.WaitAsync(COMMAND_QUEUE_TIMEOUT, _lifetimeCts.Token);
+            if (!locked)
             {
-                _centurionDeviceAddress = (byte)address;
-                _centurionProbeAttempts++;
-                await WriteCenturionCplAsync(payload);
-                byte[]? inner = await ReadCenturionInnerAsync(8);
-                if (inner is { Length: >= 2 } && inner[0] == 0x00 && (inner[1] & 0xF0) == 0x10)
-                {
-                    NativeDiagnosticsStore.UpdateSession(_diagnostics, x =>
-                    {
-                        x.Centurion ??= new CenturionDiscoveryDiagnostic();
-                        x.Centurion.DeviceAddress = _centurionDeviceAddress.HasValue ? NativeDiagnosticsStore.FormatHex(_centurionDeviceAddress.Value, 2) : null;
-                        x.Centurion.ProbeAttempts = _centurionProbeAttempts;
-                    });
-                    return true;
-                }
+                return false;
             }
 
-            _centurionDeviceAddress = null;
-            return false;
+            try
+            {
+                byte[] payload = [0x00, 0x10, 0x00, 0x00, 0x00];
+                for (int address = 0; address <= byte.MaxValue && !Disposed; address++)
+                {
+                    _centurionDeviceAddress = (byte)address;
+                    _centurionProbeAttempts++;
+                    await WriteCenturionCplAsync(payload);
+                    byte[]? inner = await ReadCenturionInnerAsync(8);
+                    if (inner is { Length: >= 2 } && inner[0] == 0x00 && (inner[1] & 0xF0) == 0x10)
+                    {
+                        NativeDiagnosticsStore.UpdateSession(_diagnostics, x =>
+                        {
+                            x.Centurion ??= new CenturionDiscoveryDiagnostic();
+                            x.Centurion.DeviceAddress = _centurionDeviceAddress.HasValue ? NativeDiagnosticsStore.FormatHex(_centurionDeviceAddress.Value, 2) : null;
+                            x.Centurion.ProbeAttempts = _centurionProbeAttempts;
+                        });
+                        return true;
+                    }
+                }
+
+                _centurionDeviceAddress = null;
+                return false;
+            }
+            finally
+            {
+                _centurionCommandSemaphore.Release();
+            }
         }
 
         private async Task<byte[]?> CenturionRequestAsync(byte featureIndex, byte function, byte[] parameters, int timeout = 1000)
         {
-            byte functionSw = (byte)((function & 0xF0) | NextCenturionSwId());
-            byte[] payload = [featureIndex, functionSw, .. parameters];
-            return await CenturionCplRequestAsync(payload, timeout, x =>
-                x.Length >= 2 && x[0] == featureIndex && x[1] == functionSw ? x[2..] : null
-            );
-        }
-
-        private async Task<byte[]?> CenturionBridgeRequestAsync(byte bridgeIndex, byte subFeatureIndex, byte subFunction, byte[] parameters, int timeout = 1500)
-        {
-            byte swId = NextCenturionSwId();
-            byte subFunctionSw = (byte)((subFunction & 0xF0) | swId);
-            byte[] subMessage = [0x00, subFeatureIndex, subFunctionSw, .. parameters];
-            byte[] bridgeHeader = [(byte)((subMessage.Length >> 8) & 0x0F), (byte)(subMessage.Length & 0xFF)];
-            byte[] bridgePrefix = [bridgeIndex, (byte)(0x10 | swId)];
-            byte[] payload = [.. bridgePrefix, .. bridgeHeader, .. subMessage];
-
-            bool ackReceived = false;
-            DateTimeOffset started = DateTimeOffset.Now;
-            await WriteCenturionCplAsync(payload);
-
-            while ((DateTimeOffset.Now - started).TotalMilliseconds < timeout)
-            {
-                byte[]? inner = await ReadCenturionInnerAsync(200);
-                if (inner == null || inner.Length < 2 || inner[0] != bridgeIndex)
-                {
-                    continue;
-                }
-
-                byte funcSw = inner[1];
-                if ((funcSw >> 4) == 0x01 && (funcSw & 0x0F) == swId)
-                {
-                    ackReceived = true;
-                    break;
-                }
-
-                if ((funcSw >> 4) == 0x01 && (funcSw & 0x0F) == 0x00)
-                {
-                    byte[]? parsed = ParseCenturionBridgeResponse(inner, subFeatureIndex, subFunctionSw);
-                    if (parsed != null)
-                    {
-                        return parsed;
-                    }
-                }
-            }
-
-            if (!ackReceived)
+            bool locked = await _centurionCommandSemaphore.WaitAsync(COMMAND_QUEUE_TIMEOUT, _lifetimeCts.Token);
+            if (!locked)
             {
                 return null;
             }
 
-            while ((DateTimeOffset.Now - started).TotalMilliseconds < timeout)
+            try
             {
-                byte[]? inner = await ReadCenturionInnerAsync(200);
-                if (inner == null || inner.Length < 2 || inner[0] != bridgeIndex)
-                {
-                    continue;
-                }
+                byte functionSw = (byte)((function & 0xF0) | NextCenturionSwId());
+                byte[] payload = [featureIndex, functionSw, .. parameters];
+                return await CenturionCplRequestAsync(payload, timeout, x =>
+                    x.Length >= 2 && x[0] == featureIndex && x[1] == functionSw ? x[2..] : null
+                );
+            }
+            finally
+            {
+                _centurionCommandSemaphore.Release();
+            }
+        }
 
-                byte funcSw = inner[1];
-                if ((funcSw >> 4) == 0x01 && (funcSw & 0x0F) == 0x00)
-                {
-                    byte[]? parsed = ParseCenturionBridgeResponse(inner, subFeatureIndex, subFunctionSw);
-                    if (parsed != null)
-                    {
-                        return parsed;
-                    }
-                }
+        private async Task<byte[]?> CenturionBridgeRequestAsync(byte bridgeIndex, byte subFeatureIndex, byte subFunction, byte[] parameters, int timeout = 1500)
+        {
+            bool locked = await _centurionCommandSemaphore.WaitAsync(COMMAND_QUEUE_TIMEOUT, _lifetimeCts.Token);
+            if (!locked)
+            {
+                return null;
             }
 
-            return null;
+            try
+            {
+                byte swId = NextCenturionSwId();
+                byte subFunctionSw = (byte)((subFunction & 0xF0) | swId);
+                byte[] subMessage = [0x00, subFeatureIndex, subFunctionSw, .. parameters];
+                byte[] bridgeHeader = [(byte)((subMessage.Length >> 8) & 0x0F), (byte)(subMessage.Length & 0xFF)];
+                byte[] bridgePrefix = [bridgeIndex, (byte)(0x10 | swId)];
+                byte[] payload = [.. bridgePrefix, .. bridgeHeader, .. subMessage];
+
+                bool ackReceived = false;
+                DateTimeOffset started = DateTimeOffset.Now;
+                await WriteCenturionCplAsync(payload);
+
+                while ((DateTimeOffset.Now - started).TotalMilliseconds < timeout)
+                {
+                    byte[]? inner = await ReadCenturionInnerAsync(200);
+                    if (inner == null || inner.Length < 2 || inner[0] != bridgeIndex)
+                    {
+                        continue;
+                    }
+
+                    byte funcSw = inner[1];
+                    if ((funcSw >> 4) == 0x01 && (funcSw & 0x0F) == swId)
+                    {
+                        ackReceived = true;
+                        break;
+                    }
+
+                    if ((funcSw >> 4) == 0x01 && (funcSw & 0x0F) == 0x00)
+                    {
+                        byte[]? parsed = ParseCenturionBridgeResponse(inner, subFeatureIndex, subFunctionSw);
+                        if (parsed != null)
+                        {
+                            return parsed;
+                        }
+                    }
+                }
+
+                if (!ackReceived)
+                {
+                    return null;
+                }
+
+                while ((DateTimeOffset.Now - started).TotalMilliseconds < timeout)
+                {
+                    byte[]? inner = await ReadCenturionInnerAsync(200);
+                    if (inner == null || inner.Length < 2 || inner[0] != bridgeIndex)
+                    {
+                        continue;
+                    }
+
+                    byte funcSw = inner[1];
+                    if ((funcSw >> 4) == 0x01 && (funcSw & 0x0F) == 0x00)
+                    {
+                        byte[]? parsed = ParseCenturionBridgeResponse(inner, subFeatureIndex, subFunctionSw);
+                        if (parsed != null)
+                        {
+                            return parsed;
+                        }
+                    }
+                }
+
+                return null;
+            }
+            finally
+            {
+                _centurionCommandSemaphore.Release();
+            }
         }
 
         private static byte[]? ParseCenturionBridgeResponse(byte[] inner, byte expectedSubFeatureIndex, byte expectedSubFunctionSw)
