@@ -483,6 +483,16 @@ namespace LGSTrayHID
 
         private void ProcessMessage(byte[] buffer)
         {
+            if (KnownLogitechDevices.IsCenturionProduct(_shortEndpoint.ProductId))
+            {
+                CenturionTraceWriter.Record(
+                    "rx",
+                    _shortEndpoint.ProductId,
+                    _shortEndpoint.PathHash,
+                    buffer
+                );
+            }
+
             if (buffer.Length < 4)
             {
                 return;
@@ -1418,6 +1428,12 @@ namespace LGSTrayHID
         private async Task WriteCenturionCplAsync(byte[] payload)
         {
             byte[] frame = CenturionFrameCodec.BuildFrame(_centurionReportId, _centurionDeviceAddress, payload);
+            CenturionTraceWriter.Record(
+                "tx",
+                _shortEndpoint.ProductId,
+                _shortEndpoint.PathHash,
+                frame
+            );
             await _devShort.WriteAsync(frame);
         }
 
