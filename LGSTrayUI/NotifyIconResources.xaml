@@ -6,6 +6,56 @@
 
     <!-- ThemeService seeds TrayMenuResolved* at application level; each live ContextMenu receives its current palette immediately before opening. -->
 
+    <ControlTemplate x:Key="TrayMenuScrollThumbTemplate" TargetType="Thumb">
+        <Border x:Name="ThumbBorder"
+                Margin="2"
+                CornerRadius="4"
+                Background="#9AA3AE"/>
+        <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="ThumbBorder" Property="Background" Value="#748091"/>
+            </Trigger>
+        </ControlTemplate.Triggers>
+    </ControlTemplate>
+
+    <Style x:Key="TrayMenuScrollRepeatButtonStyle" TargetType="RepeatButton">
+        <Setter Property="Focusable" Value="False"/>
+        <Setter Property="OverridesDefaultStyle" Value="True"/>
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="RepeatButton">
+                    <Border Background="Transparent"/>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <ControlTemplate x:Key="TrayMenuVerticalScrollBarTemplate" TargetType="ScrollBar">
+        <Grid Width="{TemplateBinding Width}" Background="{TemplateBinding Background}">
+            <Track x:Name="PART_Track" IsDirectionReversed="True">
+                <Track.DecreaseRepeatButton>
+                    <RepeatButton Command="{x:Static ScrollBar.PageUpCommand}"
+                                  Style="{StaticResource TrayMenuScrollRepeatButtonStyle}"/>
+                </Track.DecreaseRepeatButton>
+                <Track.Thumb>
+                    <Thumb MinHeight="36" Template="{StaticResource TrayMenuScrollThumbTemplate}"/>
+                </Track.Thumb>
+                <Track.IncreaseRepeatButton>
+                    <RepeatButton Command="{x:Static ScrollBar.PageDownCommand}"
+                                  Style="{StaticResource TrayMenuScrollRepeatButtonStyle}"/>
+                </Track.IncreaseRepeatButton>
+            </Track>
+        </Grid>
+    </ControlTemplate>
+
+    <Style x:Key="TrayMenuScrollBarStyle" TargetType="ScrollBar">
+        <Setter Property="Width" Value="9"/>
+        <Setter Property="MinWidth" Value="9"/>
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="Template" Value="{StaticResource TrayMenuVerticalScrollBarTemplate}"/>
+    </Style>
+
     <Style x:Key="TrayMenuItemStyle" TargetType="MenuItem">
         <Setter Property="Background" Value="Transparent"/>
         <Setter Property="Foreground" Value="{DynamicResource TrayMenuResolvedForegroundBrush}"/>
@@ -61,7 +111,35 @@
                                     BorderThickness="1"
                                     CornerRadius="8"
                                     Padding="2">
-                                <ScrollViewer CanContentScroll="True">
+                                <ScrollViewer x:Name="SubmenuScrollViewer"
+                                              MaxHeight="{TemplateBinding MaxHeight}"
+                                              CanContentScroll="True"
+                                              HorizontalScrollBarVisibility="Disabled">
+                                    <ScrollViewer.Resources>
+                                        <Style TargetType="{x:Type ScrollBar}" BasedOn="{StaticResource TrayMenuScrollBarStyle}"/>
+                                    </ScrollViewer.Resources>
+                                    <ScrollViewer.Style>
+                                        <Style TargetType="ScrollViewer">
+                                            <Setter Property="VerticalScrollBarVisibility" Value="Auto"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Items.Count, RelativeSource={RelativeSource TemplatedParent}}" Value="0">
+                                                    <Setter Property="VerticalScrollBarVisibility" Value="Disabled"/>
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding Items.Count, RelativeSource={RelativeSource TemplatedParent}}" Value="1">
+                                                    <Setter Property="VerticalScrollBarVisibility" Value="Disabled"/>
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding Items.Count, RelativeSource={RelativeSource TemplatedParent}}" Value="2">
+                                                    <Setter Property="VerticalScrollBarVisibility" Value="Disabled"/>
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding Items.Count, RelativeSource={RelativeSource TemplatedParent}}" Value="3">
+                                                    <Setter Property="VerticalScrollBarVisibility" Value="Disabled"/>
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding Items.Count, RelativeSource={RelativeSource TemplatedParent}}" Value="4">
+                                                    <Setter Property="VerticalScrollBarVisibility" Value="Disabled"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </ScrollViewer.Style>
                                     <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle"/>
                                 </ScrollViewer>
                             </Border>
@@ -130,7 +208,10 @@
             </Style>
         </ContextMenu.Resources>
 
-        <MenuItem Header="{Binding Loc[MenuDevices]}" ItemsSource="{Binding LogiDevices}">
+        <!-- Four device rows at 28 DIP each; the fifth device enables the scrollable overflow. -->
+        <MenuItem Header="{Binding Loc[MenuDevices]}"
+                  ItemsSource="{Binding LogiDevices}"
+                  MaxHeight="112">
             <MenuItem.ItemContainerStyle>
                 <Style TargetType="MenuItem" BasedOn="{StaticResource TrayMenuItemStyle}">
                     <Setter Property="MinWidth" Value="216"/>
