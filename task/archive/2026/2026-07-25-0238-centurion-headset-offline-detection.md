@@ -23,8 +23,8 @@
 - [x] Set the default lightweight presence interval to 15 seconds.
 - [x] Add regression coverage and run Debug/Release validation.
 - [x] Commit the exact local 1.4.3 candidate source.
-- [ ] Package, back up, and install the local 1.4.3 candidate.
-- [ ] Measure headset power-off disappearance and power-on recovery.
+- [x] Package, back up, and install the local 1.4.3 candidate.
+- [x] Measure headset power-off disappearance and power-on recovery.
 
 ## Acceptance Criteria
 
@@ -48,4 +48,10 @@
 - Standard HID++ devices use the same within-check confirmation count, while their existing endpoint hotplug and offline-deferral behavior is unchanged.
 - The default lightweight presence interval is now 15 seconds. The 600-second full battery publication interval remains unchanged.
 - Debug and Release solution builds completed with zero warnings and zero errors. The complete Debug and Release `PowerTray.Tests` programs passed.
-- The exact product/test candidate source was committed on local `main`. Packaging, local installation, and physical headset timing validation remain pending.
+- The exact product/test candidate source is commit `31cce6c6ed0e3f9b2863535bf18d019ca95d832a` on local `main`.
+- Built the local-only light installer at `bin/Release/centurion-offline-candidate-20260725-0237/installer/PowerTraySetup-centurion-offline-1.4.3.exe`: 3,801,357 bytes, SHA-256 `957BB832A02BEBB2F284082156545D5C0C5938F84C507A4621503127DAD62D68`.
+- The release signing key remains absent on this machine, so the local-only installer is unsigned and was not prepared for distribution.
+- Backed up the complete previous 586-file `0c7b35b` candidate to `%TEMP%\PowerTray-1.4.3-before-centurion-offline-20260725-0239`; UI and HID hashes match the source installation.
+- Silent installation exited with code 0. Installed UI/HID assemblies and `appsettings.toml` match the final publish directory, report `1.4.3+31cce6c6ed0e3f9b2863535bf18d019ca95d832a`, use `presencePeriod = 15`, and remain the light edition.
+- Physical monitoring recorded the Centurion headset offline at `02:39:41.097`, online at `02:40:02.602`, offline at `02:40:22.601`, and online again at `02:40:32.441`.
+- `PowerTray` PID 11596 and `PowerTrayHID` PID 33576 remained unchanged through both transitions; `/health` kept `restartCount: 0`. Power-off disappearance and power-on recovery no longer depend on the 600-second battery poll or a helper restart.
