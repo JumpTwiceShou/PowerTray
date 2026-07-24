@@ -30,6 +30,22 @@ namespace LGSTrayHID
         private const byte DEVICE_DISCONNECTED_FLAG = 0x40;
         private const byte CENTURION_REPORT_ID = CenturionFrameCodec.ReportId;
         private const byte CENTURION_ADDRESSED_REPORT_ID = CenturionFrameCodec.AddressedReportId;
+        private delegate Task<byte[]?> CenturionFeatureRequest(
+            byte featureIndex,
+            byte function,
+            byte[] parameters,
+            HidppDevices self
+        );
+        private delegate Task<byte[]?> CenturionDeviceRequest(
+            byte featureIndex,
+            byte function,
+            byte[] parameters
+        );
+        private sealed record CenturionPresenceTarget(
+            string DeviceId,
+            IReadOnlyDictionary<ushort, byte> Features,
+            CenturionDeviceRequest Request
+        );
         private static readonly TimeSpan[] UnknownDeviceInitializationDelays =
         [
             TimeSpan.Zero,
@@ -48,6 +64,7 @@ namespace LGSTrayHID
         private readonly object _handleSync = new();
         private readonly object _reopenSync = new();
         private readonly object _taskSync = new();
+        private readonly object _centurionPresenceSync = new();
         private readonly HashSet<SafeHidDeviceHandle> _expectedClosedHandles = [];
         private readonly Dictionary<SafeHidDeviceHandle, Thread> _readerThreads = [];
         private readonly List<Task> _backgroundTasks = [];
@@ -76,6 +93,7 @@ namespace LGSTrayHID
         private int _started;
         private int _readerShutdownTimedOut;
         private int _receiverDetected;
+        private CenturionPresenceTarget? _centurionPresenceTarget;
         private Task? _disposeTask;
 
         public IReadOnlyDictionary<ushort, HidppDevice> DeviceCollection => _deviceCollection;
@@ -233,6 +251,30 @@ namespace LGSTrayHID
                     {
                         await Task.Delay(COMMAND_RETRY_DELAY_MS * attempt, _lifetimeCts.Token);
                     }
+                }
+            }
+
+            CenturionPresenceTarget? centurionTarget;
+            lock (_centurionPresenceSync)
+            {
+                centurionTarget = _centurionPresenceTarget;
+            }
+
+            if (centurionTarget == null)
+            {
+                return;
+            }
+
+            for (int attempt = 1; attempt <= Math.Max(1, attempts); attempt++)
+            {
+                if (await ProbeCenturionPresenceAsync(centurionTarget, forcePublish))
+                {
+                    break;
+                }
+
+                if (attempt < attempts)
+                {
+                    await Task.Delay(COMMAND_RETRY_DELAY_MS * attempt, _lifetimeCts.Token);
                 }
             }
         }
@@ -820,9 +862,6 @@ namespace LGSTrayHID
             return true;
         }
 
-        private delegate Task<byte[]?> CenturionFeatureRequest(byte featureIndex, byte function, byte[] parameters, HidppDevices self);
-        private delegate Task<byte[]?> CenturionDeviceRequest(byte featureIndex, byte function, byte[] parameters);
-
         private async Task<bool> InitialiseCenturionDeviceAsync(
             IReadOnlyDictionary<ushort, byte> features,
             CenturionDeviceRequest request,
@@ -846,6 +885,16 @@ namespace LGSTrayHID
             }
             string deviceId = $"centurion-{serial}";
             bool hasBattery = features.ContainsKey(0x0104);
+            lock (_centurionPresenceSync)
+            {
+                _centurionPresenceTarget = hasBattery
+                    ? new CenturionPresenceTarget(
+                        deviceId,
+                        new Dictionary<ushort, byte>(features),
+                        request
+                    )
+                    : null;
+            }
 
             RecordDeviceDiscovery("0xFF", name, DeviceType.Headset, deviceId, features, "0x0104", null);
             HidppManagerContext.Instance.SignalDeviceEvent(
@@ -1056,32 +1105,71 @@ namespace LGSTrayHID
             UpdateMessage? update = await CreateCenturionBatteryUpdateAsync(deviceId, features, request);
             if (update != null)
             {
-                lock (_offlineSignalledDeviceIds)
-                {
-                    _offlineSignalledDeviceIds.Remove(deviceId);
-                    _centurionFailureCounts.Remove(deviceId);
-                }
-
-                NativeDiagnosticsStore.RecordCommandSuccess();
+                ResetCenturionTransportFailures(deviceId);
                 HidppManagerContext.Instance.SignalDeviceEvent(IPCMessageType.UPDATE, update);
                 return;
             }
 
+            RegisterCenturionTransportFailure(deviceId, "centurionBatteryUnavailable");
+        }
+
+        private async Task<bool> ProbeCenturionPresenceAsync(
+            CenturionPresenceTarget target,
+            bool forcePublish
+        )
+        {
+            UpdateMessage? update = await CreateCenturionBatteryUpdateAsync(
+                target.DeviceId,
+                target.Features,
+                target.Request
+            );
+            if (update == null)
+            {
+                RegisterCenturionTransportFailure(target.DeviceId, "centurionPresenceUnavailable");
+                return false;
+            }
+
+            bool wasOffline = ResetCenturionTransportFailures(target.DeviceId);
+            if (wasOffline || forcePublish)
+            {
+                HidppManagerContext.Instance.SignalDeviceEvent(IPCMessageType.UPDATE, update);
+            }
+
+            return true;
+        }
+
+        private void RegisterCenturionTransportFailure(string deviceId, string reason)
+        {
             int failures;
             lock (_offlineSignalledDeviceIds)
             {
                 failures = _centurionFailureCounts.TryGetValue(deviceId, out int existing) ? existing + 1 : 1;
                 _centurionFailureCounts[deviceId] = failures;
             }
-            NativeDiagnosticsStore.AddEvent($"Centurion battery unavailable ({failures}/{GlobalSettings.settings.ConsecutiveFailureThreshold}).");
+            NativeDiagnosticsStore.AddEvent(
+                $"Centurion transport degraded: {reason} ({failures}/{GlobalSettings.settings.ConsecutiveFailureThreshold})."
+            );
             if (DeviceTransportPolicy.ShouldSignalOffline(failures, GlobalSettings.settings.ConsecutiveFailureThreshold))
             {
                 SignalOffline(deviceId);
                 if (failures == GlobalSettings.settings.ConsecutiveFailureThreshold)
                 {
-                    RecoverTransport("centurionBatteryUnavailable");
+                    RecoverTransport(reason);
                 }
             }
+        }
+
+        private bool ResetCenturionTransportFailures(string deviceId)
+        {
+            bool wasOffline;
+            lock (_offlineSignalledDeviceIds)
+            {
+                wasOffline = _offlineSignalledDeviceIds.Remove(deviceId);
+                _centurionFailureCounts.Remove(deviceId);
+            }
+
+            NativeDiagnosticsStore.RecordCommandSuccess();
+            return wasOffline;
         }
 
         private void SignalOffline(string deviceId, bool bypassDeferral = false)

@@ -515,6 +515,8 @@ static void TestHidSessionRecoveryPolicy()
 
 static void TestDeviceTransportPolicy()
 {
+    Assert(DeviceTransportPolicy.GetPresenceConfirmationAttempts(1) == 2, "Presence confirmation must retain a minimum of two attempts.");
+    Assert(DeviceTransportPolicy.GetPresenceConfirmationAttempts(3) == 3, "Presence confirmation must use the configured failure threshold in one check.");
     Assert(!DeviceTransportPolicy.ShouldSignalOffline(1, 3), "A single transient failure must not mark a device offline.");
     Assert(!DeviceTransportPolicy.ShouldSignalOffline(2, 3), "Two failures must remain below a threshold of three.");
     Assert(DeviceTransportPolicy.ShouldSignalOffline(3, 3), "The configured consecutive-failure threshold should mark the device offline.");
@@ -527,6 +529,9 @@ static void TestDeviceTransportPolicy()
 
 static void TestNativeSettingsValidation()
 {
+    NativeDeviceManagerSettings defaults = new();
+    Assert(defaults.PresencePeriod == 15, "Native presence checks should default to the safe 15-second minimum.");
+
     NativeDeviceManagerSettings settings = new()
     {
         RetryTime = -1,

@@ -24,7 +24,7 @@ retryTime = 10
 pollPeriod = 600
 
 # Time in seconds between lightweight presence checks. This does not rebuild HID sessions.
-presencePeriod = 60
+presencePeriod = 15
 
 # Consecutive transport failures required before a device is reported offline.
 consecutiveFailureThreshold = 3

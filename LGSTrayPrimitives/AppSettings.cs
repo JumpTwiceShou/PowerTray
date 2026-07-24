@@ -117,7 +117,7 @@ public class NativeDeviceManagerSettings : IDeviceManagerSettings
 {
     private int _retryTime = 10;
     private int _pollPeriod = 600;
-    private int _presencePeriod = 60;
+    private int _presencePeriod = 15;
     private int _consecutiveFailureThreshold = 3;
     private string[] _disabledDevices = [];
 

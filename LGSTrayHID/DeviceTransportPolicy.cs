@@ -2,9 +2,14 @@ namespace LGSTrayHID;
 
 internal static class DeviceTransportPolicy
 {
+    public static int GetPresenceConfirmationAttempts(int threshold)
+    {
+        return Math.Max(2, threshold);
+    }
+
     public static bool ShouldSignalOffline(int consecutiveFailures, int threshold)
     {
-        return consecutiveFailures >= Math.Max(2, threshold);
+        return consecutiveFailures >= GetPresenceConfirmationAttempts(threshold);
     }
 
     public static bool ShouldPublishUpdate<T>(bool forceUpdate, bool wasOffline, T current, T previous)

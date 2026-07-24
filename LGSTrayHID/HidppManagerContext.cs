@@ -442,7 +442,12 @@ public sealed class HidppManagerContext
                 return;
             }
 
-            await Task.WhenAll(snapshot.Select(session => session.ProbePresenceAsync())).WaitAsync(cancellationToken);
+            int attempts = DeviceTransportPolicy.GetPresenceConfirmationAttempts(
+                GlobalSettings.settings.ConsecutiveFailureThreshold
+            );
+            await Task.WhenAll(
+                snapshot.Select(session => session.ProbePresenceAsync(attempts))
+            ).WaitAsync(cancellationToken);
             if (snapshot.Any(session => !session.Disposed && !session.HasKnownDevices))
             {
                 RediscoveryScheduler? scheduler = _rediscoveryScheduler;
