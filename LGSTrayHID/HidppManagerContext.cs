@@ -12,8 +12,6 @@ public sealed class HidppManagerContext
     private const ushort LOGITECH_VENDOR_ID = 0x046D;
     private const int HOTPLUG_LEFT_REDISCOVER_DELAY_MS = 500;
     private const int HOTPLUG_OFFLINE_GRACE_MS = 3000;
-    private const int REDISCOVER_FOLLOW_UP_DELAY_MS = 250;
-    private static readonly int[] HotplugArrivalRediscoverDelaysMs = [50, 300, 1000];
 
     private static readonly HidppManagerContext InstanceValue = new();
     public static HidppManagerContext Instance => InstanceValue;
@@ -30,10 +28,8 @@ public sealed class HidppManagerContext
     private readonly SemaphoreSlim _rediscoverLock = new(1, 1);
 
     private CancellationTokenSource? _lifetimeCts;
+    private RediscoveryScheduler? _rediscoveryScheduler;
     private HidHotPlugCallbackHandle _hotplugHandle;
-    private int _rediscoverQueued;
-    private int _rediscoverRequestedWhileRunning;
-    private int _hotplugArrivalRediscoverQueued;
 
     public delegate void HidppDeviceEventHandler(IPCMessageType messageType, IPCMessage message);
     public event HidppDeviceEventHandler? HidppDeviceEvent;
@@ -74,6 +70,33 @@ public sealed class HidppManagerContext
     private void EmitOffline(DeviceOfflineMessage offlineMessage)
     {
         HidppDeviceEvent?.Invoke(IPCMessageType.OFFLINE, offlineMessage);
+    }
+
+    internal void SignalDeviceOffline(
+        DeviceOfflineMessage offlineMessage,
+        bool bypassDeferral,
+        bool wasAlreadySignalled
+    )
+    {
+        if (!bypassDeferral)
+        {
+            SignalDeviceEvent(IPCMessageType.OFFLINE, offlineMessage);
+            return;
+        }
+
+        bool deferredSignalCancelled = _offlineGate.Cancel(offlineMessage.deviceId);
+        if (!HidSessionRecoveryPolicy.ShouldEmitBypassedOffline(
+                wasAlreadySignalled,
+                deferredSignalCancelled
+            ))
+        {
+            return;
+        }
+
+        NativeDiagnosticsStore.AddEvent(
+            $"Confirmed direct endpoint removal for device hash={NativeDiagnosticsStore.HashForDiagnostics(offlineMessage.deviceId)}"
+        );
+        EmitOffline(offlineMessage);
     }
 
     private unsafe int HotplugEvent(HidHotPlugCallbackHandle _, HidDeviceInfo* device, HidApiHotPlugEvent hotplugEvent, nint __)
@@ -125,6 +148,10 @@ public sealed class HidppManagerContext
         }
 
         _lifetimeCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _rediscoveryScheduler = new RediscoveryScheduler(
+            ExecuteRediscoveryPassAsync,
+            _lifetimeCts.Token
+        );
 
         unsafe
         {
@@ -142,7 +169,10 @@ public sealed class HidppManagerContext
             }
         }
 
-        TrackBackgroundTask(RediscoverDevicesAsync("startup"), "startup rediscover");
+        TrackBackgroundTask(
+            _rediscoveryScheduler.RunBoundedAsync("startup", _lifetimeCts.Token),
+            "startup rediscover"
+        );
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
@@ -154,7 +184,9 @@ public sealed class HidppManagerContext
         }
 
         CancellationTokenSource? lifetime = _lifetimeCts;
-        _lifetimeCts = null;
+        RediscoveryScheduler? scheduler = _rediscoveryScheduler;
+        _rediscoveryScheduler = null;
+        scheduler?.Dispose();
         lifetime?.Cancel();
         _offlineGate.CancelAll();
         await _offlineGate.WaitForPendingAsync(cancellationToken);
@@ -192,129 +224,82 @@ public sealed class HidppManagerContext
             await session.DisposeAsync();
         }
 
+        _lifetimeCts = null;
+        scheduler?.Dispose();
         lifetime?.Dispose();
     }
 
     private void ScheduleRediscover(int delayMs = 1000, string reason = "scheduled")
     {
-        CancellationToken token = LifetimeToken;
-        if (token.IsCancellationRequested)
+        RediscoveryScheduler? scheduler = _rediscoveryScheduler;
+        if (scheduler == null || LifetimeToken.IsCancellationRequested)
         {
-            return;
-        }
-
-        if (Interlocked.Exchange(ref _rediscoverQueued, 1) == 1)
-        {
-            QueueRediscoverAfterCurrent($"already queued after {reason}");
             return;
         }
 
         NativeDiagnosticsStore.AddEvent($"Rediscover scheduled in {delayMs}ms after {reason}");
-        Task task = Task.Run(async () =>
-        {
-            try
-            {
-                await Task.Delay(delayMs, token);
-                await RediscoverDevicesAsync(reason);
-            }
-            catch (OperationCanceledException)
-            {
-            }
-            finally
-            {
-                Interlocked.Exchange(ref _rediscoverQueued, 0);
-            }
-        }, CancellationToken.None);
-        TrackBackgroundTask(task, $"scheduled rediscover ({reason})");
+        TrackBackgroundTask(
+            scheduler.ScheduleLatest(TimeSpan.FromMilliseconds(delayMs), reason),
+            $"scheduled rediscover ({reason})"
+        );
     }
 
     private void ScheduleHotplugArrivalRediscover()
     {
-        CancellationToken token = LifetimeToken;
-        if (token.IsCancellationRequested)
+        RediscoveryScheduler? scheduler = _rediscoveryScheduler;
+        if (scheduler == null || LifetimeToken.IsCancellationRequested)
         {
             return;
         }
 
-        if (Interlocked.Exchange(ref _hotplugArrivalRediscoverQueued, 1) == 1)
-        {
-            QueueRediscoverAfterCurrent("hotplug arrival burst already queued");
-            return;
-        }
-
-        NativeDiagnosticsStore.AddEvent("Hotplug arrival detected; scheduling fast rediscover burst");
-        Task task = Task.Run(async () =>
-        {
-            int previousDelayMs = 0;
-            try
-            {
-                foreach (int delayMs in HotplugArrivalRediscoverDelaysMs)
-                {
-                    int waitMs = Math.Max(0, delayMs - previousDelayMs);
-                    previousDelayMs = delayMs;
-                    await Task.Delay(waitMs, token);
-                    await RediscoverDevicesAsync("hotplugArrival");
-                }
-            }
-            catch (OperationCanceledException)
-            {
-            }
-            finally
-            {
-                Interlocked.Exchange(ref _hotplugArrivalRediscoverQueued, 0);
-            }
-        }, CancellationToken.None);
-        TrackBackgroundTask(task, "hotplug arrival rediscover");
-    }
-
-    private void QueueRediscoverAfterCurrent(string reason)
-    {
-        if (LifetimeToken.IsCancellationRequested)
-        {
-            return;
-        }
-
-        Interlocked.Exchange(ref _rediscoverRequestedWhileRunning, 1);
-        NativeDiagnosticsStore.AddEvent($"Rediscover queued after active discovery ({reason})");
-    }
-
-    private void ScheduleQueuedRediscoverIfNeeded()
-    {
-        if (LifetimeToken.IsCancellationRequested)
-        {
-            return;
-        }
-
-        if (Interlocked.Exchange(ref _rediscoverRequestedWhileRunning, 0) == 1)
-        {
-            ScheduleRediscover(REDISCOVER_FOLLOW_UP_DELAY_MS, "queuedDuringDiscovery");
-        }
+        NativeDiagnosticsStore.AddEvent("Hotplug arrival detected; restarting bounded rediscover window");
+        TrackBackgroundTask(
+            scheduler.RestartArrivalBurst("hotplugArrival"),
+            "hotplug arrival rediscover"
+        );
     }
 
     public void RediscoverDevices()
     {
-        TrackBackgroundTask(RediscoverDevicesAsync("requested"), "requested rediscover");
+        RediscoveryScheduler? scheduler = _rediscoveryScheduler;
+        if (scheduler == null)
+        {
+            return;
+        }
+
+        TrackBackgroundTask(
+            scheduler.RunBoundedAsync("requested", LifetimeToken),
+            "requested rediscover"
+        );
     }
 
     public async Task RediscoverDevicesAsync(string reason)
     {
+        RediscoveryScheduler scheduler = _rediscoveryScheduler
+            ?? throw new InvalidOperationException("HID rediscovery is not running.");
         CancellationToken token = LifetimeToken;
         if (token.IsCancellationRequested)
         {
             return;
         }
 
-        bool manualRequest = reason.Equals("manualRequest", StringComparison.OrdinalIgnoreCase);
-        if (manualRequest)
+        if (reason.Equals("manualRequest", StringComparison.OrdinalIgnoreCase))
         {
-            await _rediscoverLock.WaitAsync(token);
-        }
-        else if (!await _rediscoverLock.WaitAsync(0, token))
-        {
-            NativeDiagnosticsStore.AddEvent($"Rediscover skipped; discovery already running after {reason}");
-            QueueRediscoverAfterCurrent(reason);
+            await scheduler.RunNowAsync(reason, token);
             return;
         }
+
+        await scheduler.RunNowAsync(reason, token);
+    }
+
+    private async Task<bool> ExecuteRediscoveryPassAsync(
+        string reason,
+        bool retryIncompleteOnly,
+        CancellationToken requestToken
+    )
+    {
+        await _rediscoverLock.WaitAsync(requestToken);
+        CancellationToken token = LifetimeToken;
 
         List<HidppDevices> createdForAttempt = [];
         try
@@ -350,6 +335,9 @@ public sealed class HidppManagerContext
             }
 
             List<HidppDevices> removed = existing.Values.ToList();
+            HashSet<string> stillOnlineDeviceIds = next
+                .SelectMany(session => session.KnownDeviceIds)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
             lock (_sync)
             {
                 _sessions.Clear();
@@ -358,7 +346,11 @@ public sealed class HidppManagerContext
 
             foreach (HidppDevices session in removed)
             {
-                session.SignalKnownDevicesOffline("endpointRemoved");
+                session.SignalKnownDevicesOffline(
+                    "endpointRemoved",
+                    bypassDeferral: session.HasDirectDevice,
+                    stillOnlineDeviceIds: stillOnlineDeviceIds
+                );
                 await session.DisposeAsync();
                 if (session.ReaderShutdownTimedOut)
                 {
@@ -368,7 +360,7 @@ public sealed class HidppManagerContext
                 }
             }
 
-            bool forcePresenceReport = manualRequest ||
+            bool forcePresenceReport = reason.Equals("manualRequest", StringComparison.OrdinalIgnoreCase) ||
                                        reason.Equals("requested", StringComparison.OrdinalIgnoreCase);
             foreach (HidppDevices session in next)
             {
@@ -385,7 +377,14 @@ public sealed class HidppManagerContext
                 }
                 else
                 {
-                    await session.RefreshDiscoveryAsync(forcePresenceReport);
+                    if (!retryIncompleteOnly || !session.HasKnownDevices)
+                    {
+                        await session.RefreshDiscoveryAsync(forcePresenceReport);
+                    }
+                    else
+                    {
+                        session.ReattachDiagnostics();
+                    }
                     if (session.Disposed)
                     {
                         throw new InvalidOperationException(
@@ -395,12 +394,15 @@ public sealed class HidppManagerContext
                 }
             }
 
+            int incompleteSessions = next.Count(session => !session.Disposed && !session.HasKnownDevices);
             NativeDiagnosticsStore.AddEvent(
-                $"Rediscover completed after {reason}; reused={next.Count - createdForAttempt.Count}; created={createdForAttempt.Count}; removed={removed.Count}"
+                $"Rediscover completed after {reason}; reused={next.Count - createdForAttempt.Count}; created={createdForAttempt.Count}; removed={removed.Count}; incomplete={incompleteSessions}; retryOnly={retryIncompleteOnly}"
             );
+            return next.Count == 0 || incompleteSessions > 0;
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
+            return false;
         }
         catch (Exception ex)
         {
@@ -420,7 +422,6 @@ public sealed class HidppManagerContext
         finally
         {
             _rediscoverLock.Release();
-            ScheduleQueuedRediscoverIfNeeded();
         }
     }
 
@@ -442,6 +443,20 @@ public sealed class HidppManagerContext
             }
 
             await Task.WhenAll(snapshot.Select(session => session.ProbePresenceAsync())).WaitAsync(cancellationToken);
+            if (snapshot.Any(session => !session.Disposed && !session.HasKnownDevices))
+            {
+                RediscoveryScheduler? scheduler = _rediscoveryScheduler;
+                if (scheduler != null)
+                {
+                    TrackBackgroundTask(
+                        scheduler.RunIncompleteRetryAsync(
+                            "healthCheckWithIncompleteSessions",
+                            LifetimeToken
+                        ),
+                        "incomplete-session rediscover"
+                    );
+                }
+            }
         }
         catch (OperationCanceledException)
         {

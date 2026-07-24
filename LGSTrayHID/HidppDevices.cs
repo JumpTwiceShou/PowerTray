@@ -2,6 +2,7 @@ using LGSTrayHID.HidApi;
 using LGSTrayHID.Features;
 using LGSTrayPrimitives;
 using LGSTrayPrimitives.MessageStructs;
+using System.Diagnostics;
 using System.Text;
 using System.Threading.Channels;
 
@@ -29,11 +30,21 @@ namespace LGSTrayHID
         private const byte DEVICE_DISCONNECTED_FLAG = 0x40;
         private const byte CENTURION_REPORT_ID = CenturionFrameCodec.ReportId;
         private const byte CENTURION_ADDRESSED_REPORT_ID = CenturionFrameCodec.AddressedReportId;
+        private static readonly TimeSpan[] UnknownDeviceInitializationDelays =
+        [
+            TimeSpan.Zero,
+            TimeSpan.FromMilliseconds(300),
+            TimeSpan.FromMilliseconds(1000),
+            TimeSpan.FromMilliseconds(2500),
+            TimeSpan.FromMilliseconds(5000),
+        ];
 
         private readonly HidEndpointInfo _shortEndpoint;
         private readonly HidEndpointInfo? _longEndpoint;
         private readonly DiscoverySessionDiagnostic _diagnostics;
         private readonly Dictionary<ushort, HidppDevice> _deviceCollection = [];
+        private readonly Dictionary<byte, Task> _deviceInitializationTasks = [];
+        private readonly Dictionary<byte, CancellationTokenSource> _deviceInitializationRetryCts = [];
         private readonly object _handleSync = new();
         private readonly object _reopenSync = new();
         private readonly object _taskSync = new();
@@ -64,9 +75,43 @@ namespace LGSTrayHID
         private int _disposeCount;
         private int _started;
         private int _readerShutdownTimedOut;
+        private int _receiverDetected;
         private Task? _disposeTask;
 
         public IReadOnlyDictionary<ushort, HidppDevice> DeviceCollection => _deviceCollection;
+        internal bool HasKnownDevices
+        {
+            get
+            {
+                lock (_knownDeviceIds)
+                {
+                    return _knownDeviceIds.Count > 0;
+                }
+            }
+        }
+        internal bool HasDirectDevice
+        {
+            get
+            {
+                lock (_deviceCollection)
+                {
+                    return HidSessionRecoveryPolicy.ShouldBypassOfflineDeferral(
+                        Volatile.Read(ref _receiverDetected) != 0,
+                        _deviceCollection.Keys
+                    );
+                }
+            }
+        }
+        internal string[] KnownDeviceIds
+        {
+            get
+            {
+                lock (_knownDeviceIds)
+                {
+                    return [.. _knownDeviceIds];
+                }
+            }
+        }
         public HidDevicePtr DevShort => _devShort;
         public HidDevicePtr DevLong => _devLong;
         public ushort ProductId => _shortEndpoint.ProductId;
@@ -145,6 +190,11 @@ namespace LGSTrayHID
             await ProbePresenceAsync(attempts, forcePresenceReport);
         }
 
+        internal void ReattachDiagnostics()
+        {
+            NativeDiagnosticsStore.ReattachSession(_diagnostics);
+        }
+
         internal void RecoverTransport(string reason)
         {
             lock (_reopenSync)
@@ -211,6 +261,16 @@ namespace LGSTrayHID
             _readCts?.Cancel();
             _lifetimeCts.Cancel();
             _channel.Writer.TryComplete();
+            CancellationTokenSource[] initializationRetries;
+            lock (_deviceCollection)
+            {
+                initializationRetries = [.. _deviceInitializationRetryCts.Values];
+                _deviceInitializationRetryCts.Clear();
+            }
+            foreach (CancellationTokenSource retryCts in initializationRetries)
+            {
+                retryCts.Cancel();
+            }
 
             HidDevicePtr shortHandle;
             HidDevicePtr longHandle;
@@ -406,45 +466,138 @@ namespace LGSTrayHID
             }
         }
 
-        private void QueueDeviceInit(byte deviceIdx)
+        private Task QueueDeviceInitAsync(byte deviceIdx)
         {
+            Task? initializationTask;
+            TaskCompletionSource ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            HidppDevice device;
             lock (_deviceCollection)
             {
+                if (Disposed)
+                {
+                    return Task.CompletedTask;
+                }
+
+                if (_deviceInitializationTasks.TryGetValue(deviceIdx, out initializationTask))
+                {
+                    return initializationTask;
+                }
+
                 if (_deviceCollection.ContainsKey(deviceIdx))
                 {
+                    return Task.CompletedTask;
+                }
+
+                device = new(this, deviceIdx);
+                _deviceCollection[deviceIdx] = device;
+                initializationTask = InitializeDeviceAsync(ready.Task, deviceIdx, device);
+                _deviceInitializationTasks[deviceIdx] = initializationTask;
+            }
+
+            TrackBackgroundTask(initializationTask);
+            ready.SetResult();
+            return initializationTask;
+        }
+
+        private void ScheduleUnknownDeviceInitialization(byte deviceIdx)
+        {
+            CancellationTokenSource cts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token);
+            CancellationTokenSource? previous = null;
+            lock (_deviceCollection)
+            {
+                if (Disposed)
+                {
+                    cts.Dispose();
                     return;
                 }
 
-                _deviceCollection[deviceIdx] = new(this, deviceIdx);
+                if (_deviceInitializationRetryCts.Remove(deviceIdx, out CancellationTokenSource? existing))
+                {
+                    previous = existing;
+                }
+                _deviceInitializationRetryCts[deviceIdx] = cts;
             }
 
-            Task initTask = Task.Run(async () =>
-            {
-                HidppDevice device;
-                lock (_deviceCollection)
-                {
-                    device = _deviceCollection[deviceIdx];
-                }
+            previous?.Cancel();
+            NativeDiagnosticsStore.AddEvent(
+                $"{NativeDiagnosticsStore.FormatHex(_shortEndpoint.ProductId, 4)}: scheduling unknown online device initialization index={NativeDiagnosticsStore.FormatHex(deviceIdx, 2)}"
+            );
 
+            Task retryTask = Task.Run(async () =>
+            {
+                Stopwatch elapsed = Stopwatch.StartNew();
                 try
                 {
-                    await device.InitAsync();
-                    if (string.IsNullOrWhiteSpace(device.Identifier))
+                    foreach (TimeSpan delay in UnknownDeviceInitializationDelays)
                     {
-                        RemoveUninitializedDevice(deviceIdx, device, "missingIdentifier");
+                        TimeSpan wait = delay - elapsed.Elapsed;
+                        if (wait > TimeSpan.Zero)
+                        {
+                            await Task.Delay(wait, cts.Token);
+                        }
+
+                        await QueueDeviceInitAsync(deviceIdx);
+                        if (IsDeviceInitialized(deviceIdx))
+                        {
+                            return;
+                        }
                     }
                 }
-                catch (Exception ex)
+                catch (OperationCanceledException) when (cts.IsCancellationRequested)
                 {
-                    RemoveUninitializedDevice(deviceIdx, device, ex.GetType().Name);
-#if DEBUG
-                    Console.WriteLine($"Failed to initialise device index {deviceIdx}: {ex}");
-#else
-                    System.Diagnostics.Debug.WriteLine($"Failed to initialise device index {deviceIdx}: {ex}");
-#endif
                 }
-            });
-            TrackBackgroundTask(initTask);
+                finally
+                {
+                    lock (_deviceCollection)
+                    {
+                        if (_deviceInitializationRetryCts.TryGetValue(deviceIdx, out CancellationTokenSource? current) &&
+                            ReferenceEquals(current, cts))
+                        {
+                            _deviceInitializationRetryCts.Remove(deviceIdx);
+                        }
+                    }
+                    cts.Dispose();
+                }
+            }, CancellationToken.None);
+            TrackBackgroundTask(retryTask);
+        }
+
+        private bool IsDeviceInitialized(byte deviceIdx)
+        {
+            lock (_deviceCollection)
+            {
+                return _deviceCollection.TryGetValue(deviceIdx, out HidppDevice? device) &&
+                       !string.IsNullOrWhiteSpace(device.Identifier);
+            }
+        }
+
+        private async Task InitializeDeviceAsync(Task ready, byte deviceIdx, HidppDevice device)
+        {
+            await ready;
+            try
+            {
+                await device.InitAsync();
+                if (string.IsNullOrWhiteSpace(device.Identifier))
+                {
+                    RemoveUninitializedDevice(deviceIdx, device, "missingIdentifier");
+                }
+            }
+            catch (Exception ex)
+            {
+                RemoveUninitializedDevice(deviceIdx, device, ex.GetType().Name);
+#if DEBUG
+                Console.WriteLine($"Failed to initialise device index {deviceIdx}: {ex}");
+#else
+                System.Diagnostics.Debug.WriteLine($"Failed to initialise device index {deviceIdx}: {ex}");
+#endif
+            }
+            finally
+            {
+                lock (_deviceCollection)
+                {
+                    _deviceInitializationTasks.Remove(deviceIdx);
+                }
+            }
         }
 
         private void RemoveUninitializedDevice(byte deviceIdx, HidppDevice device, string reason)
@@ -472,7 +625,7 @@ namespace LGSTrayHID
 
             if (device == null || string.IsNullOrWhiteSpace(device.Identifier))
             {
-                QueueDeviceInit(deviceIdx);
+                ScheduleUnknownDeviceInitialization(deviceIdx);
                 return;
             }
 
@@ -517,8 +670,13 @@ namespace LGSTrayHID
             }
 
             bool receiverResponded = await TryReceiverDiscoveryAsync();
+            if (receiverResponded)
+            {
+                Interlocked.Exchange(ref _receiverDetected, 1);
+            }
             await Task.Delay(receiverResponded ? RECEIVER_SETTLE_DELAY_MS : RECEIVER_FALLBACK_SETTLE_DELAY_MS);
 
+            List<Task> initializationTasks = [];
             foreach (byte deviceIdx in GetProbeDeviceIndexes(receiverResponded))
             {
                 if (Disposed)
@@ -526,18 +684,34 @@ namespace LGSTrayHID
                     return;
                 }
 
+                Task? existingInitializationTask;
+                bool deviceExists;
                 lock (_deviceCollection)
                 {
-                    if (_deviceCollection.ContainsKey(deviceIdx))
-                    {
-                        continue;
-                    }
+                    deviceExists = _deviceCollection.ContainsKey(deviceIdx);
+                    _deviceInitializationTasks.TryGetValue(deviceIdx, out existingInitializationTask);
+                }
+
+                if (existingInitializationTask != null)
+                {
+                    initializationTasks.Add(existingInitializationTask);
+                    continue;
+                }
+
+                if (deviceExists)
+                {
+                    continue;
                 }
 
                 if (await Ping20(deviceIdx, DEFAULT_COMMAND_TIMEOUT, false))
                 {
-                    QueueDeviceInit(deviceIdx);
+                    initializationTasks.Add(QueueDeviceInitAsync(deviceIdx));
                 }
+            }
+
+            if (initializationTasks.Count > 0)
+            {
+                await Task.WhenAll(initializationTasks);
             }
         }
 
@@ -910,23 +1084,30 @@ namespace LGSTrayHID
             }
         }
 
-        private void SignalOffline(string deviceId)
+        private void SignalOffline(string deviceId, bool bypassDeferral = false)
         {
+            bool wasAlreadySignalled;
             lock (_offlineSignalledDeviceIds)
             {
-                if (!_offlineSignalledDeviceIds.Add(deviceId))
+                wasAlreadySignalled = !_offlineSignalledDeviceIds.Add(deviceId);
+                if (wasAlreadySignalled && !bypassDeferral)
                 {
                     return;
                 }
             }
 
-            HidppManagerContext.Instance.SignalDeviceEvent(
-                IPCMessageType.OFFLINE,
-                new DeviceOfflineMessage(deviceId)
+            HidppManagerContext.Instance.SignalDeviceOffline(
+                new DeviceOfflineMessage(deviceId),
+                bypassDeferral,
+                wasAlreadySignalled
             );
         }
 
-        internal void SignalKnownDevicesOffline(string reason)
+        internal void SignalKnownDevicesOffline(
+            string reason,
+            bool bypassDeferral = false,
+            IReadOnlySet<string>? stillOnlineDeviceIds = null
+        )
         {
             string[] deviceIds;
             lock (_knownDeviceIds)
@@ -945,7 +1126,12 @@ namespace LGSTrayHID
 
             foreach (string deviceId in deviceIds)
             {
-                SignalOffline(deviceId);
+                if (stillOnlineDeviceIds?.Contains(deviceId) == true)
+                {
+                    continue;
+                }
+
+                SignalOffline(deviceId, bypassDeferral);
             }
         }
 

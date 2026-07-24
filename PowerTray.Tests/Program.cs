@@ -377,6 +377,142 @@ static void TestDeferredOfflineGatePassesThroughOutsideGraceWindow()
     Assert(emitted.Count == 0, "Gate should not emit pass-through messages; the caller owns immediate emission.");
 }
 
+static async Task TestRediscoverySchedulerPreservesRequestDuringActivePass()
+{
+    TaskCompletionSource firstPassEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    TaskCompletionSource releaseFirstPass = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    SemaphoreSlim passLock = new(1, 1);
+    List<string> reasons = [];
+
+    using RediscoveryScheduler scheduler = new(
+        async (reason, _, cancellationToken) =>
+        {
+            await passLock.WaitAsync(cancellationToken);
+            try
+            {
+                lock (reasons)
+                {
+                    reasons.Add(reason);
+                }
+
+                if (reason == "active")
+                {
+                    firstPassEntered.TrySetResult();
+                    await releaseFirstPass.Task.WaitAsync(cancellationToken);
+                }
+
+                return false;
+            }
+            finally
+            {
+                passLock.Release();
+            }
+        },
+        CancellationToken.None,
+        [TimeSpan.Zero]
+    );
+
+    Task active = scheduler.RunNowAsync("active", CancellationToken.None);
+    await firstPassEntered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    Task queued = scheduler.ScheduleLatest(TimeSpan.Zero, "queued");
+    releaseFirstPass.TrySetResult();
+    await Task.WhenAll(active, queued).WaitAsync(TimeSpan.FromSeconds(2));
+
+    Assert(reasons.SequenceEqual(["active", "queued"]), "A rediscovery request made during an active pass must run afterwards.");
+}
+
+static async Task TestRediscoveryArrivalBurstRunsEveryBoundedAttempt()
+{
+    Assert(
+        RediscoveryScheduler.DefaultRetrySchedule.SequenceEqual(
+            [
+                TimeSpan.Zero,
+                TimeSpan.FromMilliseconds(300),
+                TimeSpan.FromMilliseconds(1000),
+                TimeSpan.FromMilliseconds(2500),
+                TimeSpan.FromMilliseconds(5000),
+            ]
+        ),
+        "Arrival recovery must use the bounded 0/300/1000/2500/5000ms schedule."
+    );
+
+    List<bool> retryModes = [];
+    int attempts = 0;
+    using RediscoveryScheduler scheduler = new(
+        (_, retryIncompleteOnly, _) =>
+        {
+            retryModes.Add(retryIncompleteOnly);
+            attempts++;
+            if (attempts == 1)
+            {
+                throw new InvalidOperationException("transient arrival race");
+            }
+
+            return Task.FromResult(false);
+        },
+        CancellationToken.None,
+        [TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero]
+    );
+
+    await scheduler.RestartArrivalBurst("arrival").WaitAsync(TimeSpan.FromSeconds(2));
+
+    Assert(attempts == 3, "Arrival recovery must retain every bounded attempt even when an early pass fails or sees no incomplete session.");
+    Assert(retryModes.SequenceEqual([false, true, true]), "Only the first arrival pass may refresh healthy sessions.");
+}
+
+static async Task TestRediscoveryIncompleteRetryStopsAfterRecovery()
+{
+    List<bool> retryModes = [];
+    int attempts = 0;
+    using RediscoveryScheduler scheduler = new(
+        (_, retryIncompleteOnly, _) =>
+        {
+            retryModes.Add(retryIncompleteOnly);
+            attempts++;
+            return Task.FromResult(attempts < 2);
+        },
+        CancellationToken.None,
+        [TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero]
+    );
+
+    await scheduler.RunIncompleteRetryAsync("emptySession", CancellationToken.None);
+
+    Assert(attempts == 2, "Incomplete-session recovery should stop once every session has a known device.");
+    Assert(retryModes.All(retryOnly => retryOnly), "Incomplete-session recovery must never refresh healthy sessions.");
+}
+
+static void TestHidSessionRecoveryPolicy()
+{
+    Assert(
+        HidSessionRecoveryPolicy.ShouldBypassOfflineDeferral(false, [0x00]),
+        "A confirmed direct device at index 00 should bypass the receiver offline grace period."
+    );
+    Assert(
+        HidSessionRecoveryPolicy.ShouldBypassOfflineDeferral(false, [0xFF]),
+        "A confirmed direct device at index FF should bypass the receiver offline grace period."
+    );
+    Assert(
+        !HidSessionRecoveryPolicy.ShouldBypassOfflineDeferral(true, [0xFF]),
+        "A detected receiver must retain the offline grace period even when index FF is present."
+    );
+    Assert(
+        !HidSessionRecoveryPolicy.ShouldBypassOfflineDeferral(false, [0x01, 0x02]),
+        "LIGHTSPEED pairing slots must retain the receiver offline grace period."
+    );
+    Assert(
+        HidSessionRecoveryPolicy.ShouldEmitBypassedOffline(false, false),
+        "The first confirmed direct-device removal must emit immediately."
+    );
+    Assert(
+        HidSessionRecoveryPolicy.ShouldEmitBypassedOffline(true, true),
+        "A confirmed direct-device removal must promote an already deferred offline signal."
+    );
+    Assert(
+        !HidSessionRecoveryPolicy.ShouldEmitBypassedOffline(true, false),
+        "A repeated direct-device removal must not duplicate an offline signal that was already emitted."
+    );
+}
+
 static void TestDeviceTransportPolicy()
 {
     Assert(!DeviceTransportPolicy.ShouldSignalOffline(1, 3), "A single transient failure must not mark a device offline.");
@@ -648,6 +784,10 @@ TestTrayMenuDictionaryDoesNotShadowApplicationPalette();
 await TestDeferredOfflineGateDelaysOffline();
 await TestDeferredOfflineGateCancelsOffline();
 TestDeferredOfflineGatePassesThroughOutsideGraceWindow();
+await TestRediscoverySchedulerPreservesRequestDuringActivePass();
+await TestRediscoveryArrivalBurstRunsEveryBoundedAttempt();
+await TestRediscoveryIncompleteRetryStopsAfterRecovery();
+TestHidSessionRecoveryPolicy();
 TestDeviceTransportPolicy();
 TestNativeSettingsValidation();
 TestCenturionFrameValidation();
