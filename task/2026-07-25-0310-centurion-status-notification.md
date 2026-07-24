@@ -24,7 +24,7 @@
 - [x] Wire online notification to fresh presence/discovery recovery.
 - [x] Preserve active presence probing as fallback.
 - [x] Run focused tests and Debug/Release builds.
-- [ ] Back up and install the local diagnostic candidate.
+- [x] Back up and install the local diagnostic candidate.
 - [ ] Validate physical power-off and power-on behavior.
 
 ## Acceptance Criteria
@@ -40,3 +40,7 @@
 - Physical capture recorded unsolicited `[0x03, 0x00, 0x00, 0x01]` on power-on and `[0x03, 0x00, 0x00, 0x00]` on power-off.
 - The existing active presence request did not start until 3,346.7 ms after the captured offline notification.
 - Solaar `5e4ae7261eb922d7b8d8e0df73756c32eab32821` implements Centurion `ConnectionStateChangedEvent`: the bridge index is the notification sub-id, function `0` is the connection event, software id `0` identifies an unsolicited feature notification, and the first two data bytes encode the sub-device descriptor-list length (`0` disconnected, non-zero connected).
+- Commit `2e59f04c9d4bda7cfb446929389cdfe584e10c84` passed complete Debug and Release builds and test programs with SDK 8.0.423.
+- Local light installer `PowerTraySetup-centurion-status-1.4.3.exe` is 3,804,180 bytes with SHA-256 `25DB4BEE51EA6A6CA949C045C7D1B1B2098E12A929C456AC974DC2B426F4C655`.
+- The previous 586-file `1.4.3+a4ea3df...` installation is backed up at `%TEMP%\PowerTray-1.4.3-before-centurion-status-20260725-0348`.
+- Installed UI and helper binaries match the candidate publish exactly and report `1.4.3+2e59f04...`; health is running with zero helper restarts. Device count remained zero during the first 50-second validation window because the headset stayed powered off.
