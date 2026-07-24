@@ -17,8 +17,8 @@
       },
       "Hardcodet.NotifyIcon.Wpf": {
         "type": "Transitive",
-        "resolved": "1.1.0",
-        "contentHash": "FFEkdRSidMrbMfQVwhCzq6KtSyR1qQojqtiUrkCyjnOOuMf7W3TNQkzFnBBxYxFe7uLk5mz7M38wFh1qdWyfvg=="
+        "resolved": "2.0.1",
+        "contentHash": "dtxmeZXzV2GzSm91aZ3hqzgoeVoARSkDPVCYfhVUNyyKBWYxMgNC0EcLiSYxD4Uc4alq/2qb3SmV8DgAENLRLQ=="
       },
       "MessagePack": {
         "type": "Transitive",
@@ -474,7 +474,7 @@
         "type": "Project",
         "dependencies": {
           "CommunityToolkit.Mvvm": "[8.2.2, )",
-          "Hardcodet.NotifyIcon.Wpf": "[1.1.0, )",
+          "Hardcodet.NotifyIcon.Wpf": "[2.0.1, )",
           "LGSTrayCore": "[1.0.0, )",
           "MessagePipe.Interprocess": "[1.8.2, )",
           "Microsoft.Extensions.Configuration.Binder": "[8.0.0, )",

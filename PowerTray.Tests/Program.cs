@@ -1,3 +1,4 @@
+using Hardcodet.Wpf.TaskbarNotification;
 using LGSTrayCore;
 using LGSTrayHID;
 using LGSTrayHID.Features;
@@ -165,6 +166,16 @@ static void TestTrayToolTipSeparators()
     Assert(LogiDeviceViewModel.FormatToolTipDetail("G502", "39.00%") == "G502, 39.00%", "ASCII tooltip separator should be a comma plus a space.");
     Assert(LogiDeviceViewModel.FormatToolTipDetail("マウス", "39.00%") == "マウス，39.00%", "Japanese tooltip separator should be a full-width comma.");
     Assert(LogiDeviceViewModel.FormatToolTipDetail("Ｇ５０２", "39.00%") == "Ｇ５０２，39.00%", "Full-width tooltip separator should be a full-width comma.");
+
+    Version hardcodetVersion = typeof(TaskbarIcon).Assembly.GetName().Version
+        ?? throw new InvalidOperationException("Hardcodet assembly version should be available.");
+    Assert(hardcodetVersion >= new Version(2, 0, 0, 0), "Native tray tooltip support requires Hardcodet 2.x.");
+
+    string longText = new string('A', 126) + "😀";
+    string normalized = LogiDeviceViewModel.NormalizeNativeToolTipText(longText);
+    Assert(normalized.Length == 126, "Native tooltip truncation must not split a UTF-16 surrogate pair.");
+    Assert(!char.IsHighSurrogate(normalized[^1]), "Native tooltip text must not end with an unmatched high surrogate.");
+    Assert(LogiDeviceViewModel.NormalizeNativeToolTipText("Mouse\r\n50%\0") == "Mouse  50% ", "Native tooltip text must remain a single null-free line.");
 }
 
 static void TestLowBatteryAlertIcons()

@@ -10,23 +10,6 @@
              mc:Ignorable="d" 
              >
     <tb:TaskbarIcon x:Name="taskbarIcon"
-                    ContextMenu="{StaticResource SysTrayMenu}">
-        <tb:TaskbarIcon.TrayToolTip>
-            <Grid>
-                <Border x:Name="trayToolTipBorder"
-                    BorderThickness="1"
-                    CornerRadius="5"
-                    BorderBrush="{DynamicResource BorderBrushSoft}"
-                    Background="{DynamicResource TooltipBackgroundBrush}"
-                    >
-                    <StackPanel Margin="5">
-                        <TextBlock x:Name="trayToolTipText"
-                                   Text="{Binding Path=DisplayToolTipString}"
-                                   Foreground="{DynamicResource TextBrush}"
-                        />
-                    </StackPanel>
-                </Border>
-            </Grid>
-        </tb:TaskbarIcon.TrayToolTip>
-    </tb:TaskbarIcon>
+                    ContextMenu="{StaticResource SysTrayMenu}"
+                    ToolTipText="{Binding Path=DisplayToolTipString}"/>
 </UserControl>

@@ -5,9 +5,7 @@ using Microsoft.Extensions.Options;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
-using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Media;
 using System.Windows.Threading;
 
 namespace LGSTrayUI
@@ -54,12 +52,7 @@ namespace LGSTrayUI
                     _userSettings.PropertyChanged -= NotifyIconViewModelPropertyChanged;
                     _userSettings.DeviceSettingsChanged -= UserSettingsDeviceSettingsChanged;
                     CheckTheme.StaticPropertyChanged -= CheckThemePropertyChanged;
-                    taskbarIcon.PreviewTrayToolTipOpen -= OnPreviewTrayToolTipOpen;
-                    taskbarIcon.TrayToolTipOpen -= OnTrayToolTipOpen;
-                    taskbarIcon.TrayToolTipClose -= OnTrayToolTipClose;
                     TrayContextMenuPlacement.Detach(taskbarIcon);
-                    _tooltipCloseTimer.Stop();
-                    CloseTrayToolTip();
                     taskbarIcon.Dispose();
                 }
             }
@@ -104,8 +97,6 @@ namespace LGSTrayUI
         private readonly LogiDevice _device;
         private readonly UserSettingsWrapper _userSettings;
         private readonly DispatcherTimer _blinkTimer;
-        private readonly DispatcherTimer _tooltipCloseTimer;
-        private string? _lastToolTipText;
         private bool _blinkVisible = true;
 
         public LogiDeviceIcon(LogiDevice device, AppSettings appSettings, UserSettingsWrapper userSettings, AlertStateService alertState)
@@ -114,7 +105,6 @@ namespace LGSTrayUI
 
             _device = device;
             _userSettings = userSettings;
-            _lastToolTipText = (device as LogiDeviceViewModel)?.DisplayToolTipString;
             AddRef();
             AddActiveIcon(this);
 
@@ -132,15 +122,7 @@ namespace LGSTrayUI
             {
                 Interval = TimeSpan.FromMilliseconds(500),
             };
-            _tooltipCloseTimer = new DispatcherTimer
-            {
-                Interval = TimeSpan.FromSeconds(4),
-            };
-            _tooltipCloseTimer.Tick += (_, _) => CloseTrayToolTip();
             TrayContextMenuPlacement.Attach(taskbarIcon);
-            taskbarIcon.PreviewTrayToolTipOpen += OnPreviewTrayToolTipOpen;
-            taskbarIcon.TrayToolTipOpen += OnTrayToolTipOpen;
-            taskbarIcon.TrayToolTipClose += OnTrayToolTipClose;
             _blinkTimer.Tick += (_, _) =>
             {
                 _blinkVisible = !_blinkVisible;
@@ -148,86 +130,6 @@ namespace LGSTrayUI
             };
             OnAlertStateChanged();
             DrawBatteryIcon();
-        }
-
-        private void OnPreviewTrayToolTipOpen(object sender, RoutedEventArgs e)
-        {
-            ConfigureTrayToolTip();
-        }
-
-        private void OnTrayToolTipOpen(object sender, RoutedEventArgs e)
-        {
-            _tooltipCloseTimer.Stop();
-            _tooltipCloseTimer.Start();
-        }
-
-        private void OnTrayToolTipClose(object sender, RoutedEventArgs e)
-        {
-            _tooltipCloseTimer.Stop();
-        }
-
-        private void ConfigureTrayToolTip()
-        {
-            ToolTip? toolTip = taskbarIcon.TrayToolTipResolved;
-            if (toolTip == null)
-            {
-                return;
-            }
-
-            ApplyTrayToolTipTheme(toolTip);
-            toolTip.StaysOpen = false;
-            ToolTipService.SetShowDuration(toolTip, 4000);
-        }
-
-        private void ApplyTrayToolTipTheme(ToolTip toolTip)
-        {
-            if (Application.Current == null)
-            {
-                return;
-            }
-
-            Brush? background = Application.Current.TryFindResource("TooltipBackgroundBrush") as Brush;
-            Brush? border = Application.Current.TryFindResource("BorderBrushSoft") as Brush;
-            Brush? foreground = Application.Current.TryFindResource("TextBrush") as Brush;
-
-            if (background != null)
-            {
-                trayToolTipBorder.Background = background;
-            }
-
-            if (border != null)
-            {
-                trayToolTipBorder.BorderBrush = border;
-            }
-
-            if (foreground != null)
-            {
-                trayToolTipText.Foreground = foreground;
-                toolTip.Foreground = foreground;
-            }
-
-            // Hardcodet creates a separate ToolTip wrapper for every tray icon. Remove
-            // its system-theme chrome so the PowerTray-themed content is the only surface.
-            toolTip.Background = Brushes.Transparent;
-            toolTip.BorderBrush = Brushes.Transparent;
-            toolTip.BorderThickness = new Thickness(0);
-            toolTip.Padding = new Thickness(0);
-        }
-
-        private void CloseTrayToolTip()
-        {
-            if (!Dispatcher.CheckAccess())
-            {
-                _ = Dispatcher.BeginInvoke(CloseTrayToolTip);
-                return;
-            }
-
-            _tooltipCloseTimer.Stop();
-            ToolTip? toolTip = taskbarIcon.TrayToolTipResolved;
-            if (toolTip != null)
-            {
-                toolTip.IsOpen = false;
-            }
         }
 
         public static bool ShowBalloonOnFirstIcon(string title, string body)
@@ -323,19 +225,6 @@ namespace LGSTrayUI
             {
                 DrawBatteryIcon();
             }
-
-            if (e.PropertyName is nameof(CheckTheme.LightTheme) or nameof(CheckTheme.ThemeMode))
-            {
-                _ = Dispatcher.BeginInvoke(() =>
-                {
-                    ToolTip? toolTip = taskbarIcon.TrayToolTipResolved;
-                    if (toolTip != null)
-                    {
-                        ApplyTrayToolTipTheme(toolTip);
-                        CloseTrayToolTip();
-                    }
-                });
-            }
         }
 
         private void LogiDevicePropertyChanged(object? s, PropertyChangedEventArgs e)
@@ -351,15 +240,6 @@ namespace LGSTrayUI
             {
                 RefreshDrawBatteryIcon();
                 DrawBatteryIcon();
-            }
-            else if (e.PropertyName == nameof(LogiDeviceViewModel.DisplayToolTipString))
-            {
-                string? current = (s as LogiDeviceViewModel)?.DisplayToolTipString;
-                if (!string.Equals(current, _lastToolTipText, StringComparison.Ordinal))
-                {
-                    _lastToolTipText = current;
-                    CloseTrayToolTip();
-                }
             }
         }
 
