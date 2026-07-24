@@ -5,7 +5,9 @@ using Microsoft.Extensions.Options;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using System.Windows.Threading;
 
 namespace LGSTrayUI
@@ -52,6 +54,7 @@ namespace LGSTrayUI
                     _userSettings.PropertyChanged -= NotifyIconViewModelPropertyChanged;
                     _userSettings.DeviceSettingsChanged -= UserSettingsDeviceSettingsChanged;
                     CheckTheme.StaticPropertyChanged -= CheckThemePropertyChanged;
+                    taskbarIcon.PreviewTrayToolTipOpen -= OnPreviewTrayToolTipOpen;
                     TrayContextMenuPlacement.Detach(taskbarIcon);
                     taskbarIcon.Dispose();
                 }
@@ -123,6 +126,7 @@ namespace LGSTrayUI
                 Interval = TimeSpan.FromMilliseconds(500),
             };
             TrayContextMenuPlacement.Attach(taskbarIcon);
+            taskbarIcon.PreviewTrayToolTipOpen += OnPreviewTrayToolTipOpen;
             _blinkTimer.Tick += (_, _) =>
             {
                 _blinkVisible = !_blinkVisible;
@@ -130,6 +134,23 @@ namespace LGSTrayUI
             };
             OnAlertStateChanged();
             DrawBatteryIcon();
+        }
+
+        private void OnPreviewTrayToolTipOpen(object sender, RoutedEventArgs e)
+        {
+            ToolTip? toolTip = taskbarIcon.TrayToolTipResolved;
+            if (toolTip == null)
+            {
+                return;
+            }
+
+            // Hardcodet hosts custom content inside its own WPF ToolTip. Keep that
+            // wrapper transparent so only the PowerTray-themed surface is visible.
+            // Placement and open/close timing remain owned by Hardcodet and WPF.
+            toolTip.Background = Brushes.Transparent;
+            toolTip.BorderBrush = Brushes.Transparent;
+            toolTip.BorderThickness = new Thickness(0);
+            toolTip.Padding = new Thickness(0);
         }
 
         public static bool ShowBalloonOnFirstIcon(string title, string body)

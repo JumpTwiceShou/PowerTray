@@ -54,35 +54,17 @@ namespace LGSTrayUI
         public bool HasAlias => !string.IsNullOrWhiteSpace(_userSettings.GetAlias(DeviceId, DeviceName));
         public bool ShowOriginalName => HasAlias && !string.Equals(BaseDisplayName, OriginalNameDisplay, StringComparison.Ordinal);
 
-        public string DisplayToolTipString => NormalizeNativeToolTipText(BatteryPercentage >= 0
+        public string DisplayToolTipString => BatteryPercentage >= 0
             ?
 #if DEBUG
             FormatToolTipDetail(DisplayName, $"{BatteryPercentage:f2}%{BatteryVoltageText()} - {LastUpdate}")
 #else
             FormatToolTipDetail(DisplayName, $"{BatteryPercentage:f2}%{BatteryVoltageText()}")
 #endif
-            : FormatToolTipDetail(DisplayName, _loc["BatteryUnknown"]));
+            : FormatToolTipDetail(DisplayName, _loc["BatteryUnknown"]);
 
         internal static string FormatToolTipDetail(string displayName, string detail) =>
             $"{displayName}{GetToolTipSeparator(displayName)}{detail}";
-
-        internal static string NormalizeNativeToolTipText(string value)
-        {
-            const int maxLength = 127;
-            string sanitized = value.Replace('\0', ' ').Replace('\r', ' ').Replace('\n', ' ');
-            if (sanitized.Length <= maxLength)
-            {
-                return sanitized;
-            }
-
-            int length = maxLength;
-            if (char.IsHighSurrogate(sanitized[length - 1]) && char.IsLowSurrogate(sanitized[length]))
-            {
-                length--;
-            }
-
-            return sanitized[..length];
-        }
 
         public LogiDeviceViewModel(LogiDeviceIconFactory logiDeviceIconFactory, UserSettingsWrapper userSettings, LocalizationService loc)
         {

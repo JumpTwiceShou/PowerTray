@@ -169,13 +169,7 @@ static void TestTrayToolTipSeparators()
 
     Version hardcodetVersion = typeof(TaskbarIcon).Assembly.GetName().Version
         ?? throw new InvalidOperationException("Hardcodet assembly version should be available.");
-    Assert(hardcodetVersion >= new Version(2, 0, 0, 0), "Native tray tooltip support requires Hardcodet 2.x.");
-
-    string longText = new string('A', 126) + "😀";
-    string normalized = LogiDeviceViewModel.NormalizeNativeToolTipText(longText);
-    Assert(normalized.Length == 126, "Native tooltip truncation must not split a UTF-16 surrogate pair.");
-    Assert(!char.IsHighSurrogate(normalized[^1]), "Native tooltip text must not end with an unmatched high surrogate.");
-    Assert(LogiDeviceViewModel.NormalizeNativeToolTipText("Mouse\r\n50%\0") == "Mouse  50% ", "Native tooltip text must remain a single null-free line.");
+    Assert(hardcodetVersion >= new Version(2, 0, 0, 0), "The themed tray tooltip candidate requires Hardcodet 2.x.");
 }
 
 static void TestLowBatteryAlertIcons()
