@@ -13,6 +13,8 @@ namespace LGSTrayUI;
 
 public static partial class BatteryIconDrawing
 {
+    private static readonly Color AlertColor = Color.FromArgb(0xE8, 0x11, 0x23);
+
     [LibraryImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool DestroyIcon(IntPtr handle);
@@ -102,13 +104,47 @@ public static partial class BatteryIconDrawing
 
     public static void DrawAlert(TaskbarIcon taskbarIcon, LogiDevice device)
     {
-        Rectangle destination = new(0, 0, ImageSize, ImageSize);
-        using Bitmap bitmap = new(ImageSize, ImageSize);
-        using Graphics graphics = Graphics.FromImage(bitmap);
-        ConfigureGraphics(graphics, SmoothingMode.AntiAlias);
-        using ImageAttributes wrapMode = new();
-        wrapMode.SetWrapMode(WrapMode.TileFlipXY);
+        using Bitmap bitmap = CreateAlertBitmap(device);
+        ReplaceIcon(taskbarIcon, CreateManagedIcon(bitmap));
+    }
 
+    internal static Bitmap CreateAlertBitmap(LogiDevice device)
+    {
+        Rectangle destination = new(0, 0, ImageSize, ImageSize);
+        Bitmap bitmap = new(ImageSize, ImageSize);
+        using Graphics graphics = Graphics.FromImage(bitmap);
+        ConfigureGraphics(graphics, SmoothingMode.HighQuality);
+
+        using ImageAttributes alertAttributes = new();
+        alertAttributes.SetWrapMode(WrapMode.TileFlipXY);
+        ColorMatrix alertMatrix = new()
+        {
+            Matrix00 = 0,
+            Matrix11 = 0,
+            Matrix22 = 0,
+            Matrix40 = AlertColor.R / 255f,
+            Matrix41 = AlertColor.G / 255f,
+            Matrix42 = AlertColor.B / 255f,
+        };
+        alertAttributes.SetColorMatrix(alertMatrix);
+
+        Bitmap[] alertLayers = [GetBatteryValue(device), Battery];
+        foreach (Bitmap image in alertLayers)
+        {
+            graphics.DrawImage(
+                image,
+                destination,
+                0,
+                0,
+                image.Width,
+                image.Height,
+                GraphicsUnit.Pixel,
+                alertAttributes
+            );
+        }
+
+        using ImageAttributes deviceAttributes = new();
+        deviceAttributes.SetWrapMode(WrapMode.TileFlipXY);
         Bitmap deviceIcon = GetDeviceIcon(device);
         graphics.DrawImage(
             deviceIcon,
@@ -118,21 +154,10 @@ public static partial class BatteryIconDrawing
             deviceIcon.Width,
             deviceIcon.Height,
             GraphicsUnit.Pixel,
-            wrapMode
+            deviceAttributes
         );
 
-        using Pen pen = new(Color.FromArgb(0xE8, 0x11, 0x23), Math.Max(2, ImageSize / 12));
-        graphics.DrawEllipse(pen, 2, 2, ImageSize - 4, ImageSize - 4);
-        using Font font = new("Segoe UI", (int)(0.68 * ImageSize), FontStyle.Bold, GraphicsUnit.Pixel);
-        using SolidBrush brush = new(Color.FromArgb(0xE8, 0x11, 0x23));
-        using StringFormat format = new(StringFormatFlags.FitBlackBox)
-        {
-            LineAlignment = StringAlignment.Center,
-            Alignment = StringAlignment.Center,
-        };
-        graphics.DrawString("!", font, brush, ImageSize / 2f, ImageSize / 2f, format);
-
-        ReplaceIcon(taskbarIcon, CreateManagedIcon(bitmap));
+        return bitmap;
     }
 
     private static void ConfigureGraphics(Graphics graphics, SmoothingMode smoothingMode)

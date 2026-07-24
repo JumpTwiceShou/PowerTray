@@ -166,6 +166,49 @@ static void TestTrayToolTipSeparators()
     Assert(LogiDeviceViewModel.FormatToolTipDetail("Ｇ５０２", "39.00%") == "Ｇ５０２，39.00%", "Full-width tooltip separator should be a full-width comma.");
 }
 
+static void TestLowBatteryAlertIcons()
+{
+    HashSet<string> fingerprints = [];
+    foreach (DeviceType deviceType in new[] { DeviceType.Mouse, DeviceType.Keyboard, DeviceType.Headset })
+    {
+        LogiDevice device = new()
+        {
+            DeviceType = deviceType,
+            BatteryPercentage = 5,
+            PowerSupplyStatus = PowerSupplyStatus.POWER_SUPPLY_STATUS_DISCHARGING,
+        };
+
+        using System.Drawing.Bitmap bitmap = BatteryIconDrawing.CreateAlertBitmap(device);
+        int alertRedPixels = 0;
+        int devicePixels = 0;
+        for (int y = 0; y < bitmap.Height; y++)
+        {
+            for (int x = 0; x < bitmap.Width; x++)
+            {
+                System.Drawing.Color pixel = bitmap.GetPixel(x, y);
+                bool isAlertRed = pixel.A > 0 && pixel.R >= 0xD0 && pixel.G <= 0x40 && pixel.B <= 0x50;
+                if (isAlertRed)
+                {
+                    alertRedPixels++;
+                }
+                else if (pixel.A > 0)
+                {
+                    devicePixels++;
+                }
+            }
+        }
+
+        Assert(alertRedPixels > 0, $"{deviceType} alert icon should contain a red battery layer.");
+        Assert(devicePixels > 0, $"{deviceType} alert icon should retain its themed device glyph.");
+
+        using MemoryStream encoded = new();
+        bitmap.Save(encoded, System.Drawing.Imaging.ImageFormat.Png);
+        fingerprints.Add(Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(encoded.ToArray())));
+    }
+
+    Assert(fingerprints.Count == 3, "Mouse, keyboard, and headset alert icons should remain visually distinct.");
+}
+
 static void TestTrayMenuPaletteUsesApplicationThemeColors()
 {
     ResourceDictionary resources = new();
@@ -563,6 +606,7 @@ TestNativeIdentityDiagnosticsRedaction();
 TestUpdaterAssetSelectionAndChecksum();
 TestHttpServerLoopbackFallback();
 TestTrayToolTipSeparators();
+TestLowBatteryAlertIcons();
 TestTrayMenuPaletteUsesApplicationThemeColors();
 TestTrayMenuDictionaryDoesNotShadowApplicationPalette();
 await TestDeferredOfflineGateDelaysOffline();
