@@ -362,7 +362,16 @@ public sealed class HidppManagerContext
 
             bool forcePresenceReport = reason.Equals("manualRequest", StringComparison.OrdinalIgnoreCase) ||
                                        reason.Equals("requested", StringComparison.OrdinalIgnoreCase);
-            foreach (HidppDevices session in next)
+            IReadOnlyList<HidppDevices> processingOrder =
+                RediscoveryPassPolicy.PrioritizeCreated(next, createdForAttempt);
+            if (createdForAttempt.Count > 0 && next.Count > createdForAttempt.Count)
+            {
+                NativeDiagnosticsStore.AddEvent(
+                    $"Rediscover prioritizing {createdForAttempt.Count} newly created HID session(s) before {next.Count - createdForAttempt.Count} reused session(s)"
+                );
+            }
+
+            foreach (HidppDevices session in processingOrder)
             {
                 token.ThrowIfCancellationRequested();
                 if (createdForAttempt.Contains(session))

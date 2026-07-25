@@ -57,25 +57,19 @@ namespace LGSTrayHID
             {
                 Hidpp20 ret;
 
-                // Sync Ping
-                int successCount = 0;
-                int successThresh = 3;
-                for (int i = 0; i < 10; i++)
+                // Require two quick, consecutive replies, then let the existing bounded
+                // rediscovery schedules handle endpoints that are not ready yet.
+                for (int i = 0; i < 2; i++)
                 {
-                    var ping = await _parent.Ping20(_deviceIdx, 100);
-                    if (ping)
+                    if (!await _parent.Ping20(
+                        _deviceIdx,
+                        100,
+                        maxAttempts: 1
+                    ))
                     {
-                        successCount++;
+                        return;
                     }
-                    else
-                    {
-                        successCount = 0;
-                    }
-
-                    if (successCount >= successThresh) { break; }
                 }
-
-                if (successCount < successThresh) { return; }
 
                 // Find 0x0001 IFeatureSet
                 ret = await _parent.WriteRead20(_parent.DevShort, new byte[7] { 0x10, _deviceIdx, 0x00, 0x00 | SW_ID, 0x00, 0x01, 0x00 });

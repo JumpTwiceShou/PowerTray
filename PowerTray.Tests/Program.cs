@@ -513,6 +513,43 @@ static void TestHidSessionRecoveryPolicy()
     );
 }
 
+static void TestRediscoveryPassPrioritizesCreatedSessions()
+{
+    string[] sessions = ["reused-a", "created-a", "reused-b", "created-b"];
+    IReadOnlyList<string> ordered = RediscoveryPassPolicy.PrioritizeCreated(
+        sessions,
+        ["created-a", "created-b"]
+    );
+
+    Assert(
+        ordered.SequenceEqual(["created-a", "created-b", "reused-a", "reused-b"]),
+        "New HID sessions must be processed first while preserving order inside both groups."
+    );
+    Assert(
+        ReferenceEquals(
+            sessions,
+            RediscoveryPassPolicy.PrioritizeCreated(sessions, Array.Empty<string>())
+        ),
+        "A pass without new sessions should retain the original session list."
+    );
+}
+
+static void TestHidCommandAttemptPolicy()
+{
+    Assert(
+        HidCommandAttemptPolicy.GetAttempts(false, 1) == 1,
+        "Speculative non-C54D probes should be allowed to use one attempt."
+    );
+    Assert(
+        HidCommandAttemptPolicy.GetAttempts(false, null) == 2,
+        "Normal HID++ commands must retain two attempts."
+    );
+    Assert(
+        HidCommandAttemptPolicy.GetAttempts(true, 1) == 2,
+        "C54D short-report recovery must retain two attempts even for speculative probes."
+    );
+}
+
 static void TestDeviceTransportPolicy()
 {
     Assert(DeviceTransportPolicy.GetPresenceConfirmationAttempts(1) == 2, "Presence confirmation must retain a minimum of two attempts.");
@@ -1049,6 +1086,64 @@ static void TestEndpointReceiverIdentityValidation()
     Assert(validSerial.ReceiverStableId == "serial:serial-hash", "A validated receiver serial hash should take precedence over ContainerId.");
 }
 
+static void TestDirectDeviceProbeCache()
+{
+    DirectDeviceProbeCache.ClearForTests();
+    try
+    {
+        Guid containerId = Guid.Parse("a5b4c3d2-e1f0-4a5b-8c7d-6e5f4a3b2c1d");
+        HidEndpointInfo first = new(
+            "path-a", containerId, 0x046D, 0xCAFE, 0x0100, "Logitech", "Device",
+            "stable-serial", "path-hash-a", "opened", 0xFF00, 0x01, 2, HidppMessageType.SHORT);
+        HidEndpointInfo movedPath = new(
+            "path-b", containerId, 0x046D, 0xCAFE, 0x0100, "Logitech", "Device",
+            "stable-serial", "path-hash-b", "opened", 0xFF00, 0x01, 2, HidppMessageType.SHORT);
+        HidEndpointInfo differentDevice = first with
+        {
+            Path = "path-c",
+            SerialNumberHash = "different-serial",
+            PathHash = "path-hash-c",
+        };
+        HidEndpointInfo invalidIndexDevice = first with
+        {
+            ProductId = 0xCAFF,
+            SerialNumberHash = "invalid-index",
+        };
+        HidEndpointInfo unstableIdentity = first with
+        {
+            ContainerId = Guid.Empty,
+            SerialNumberHash = null,
+        };
+
+        Assert(
+            DirectDeviceProbeCache.Remember(first, 0xFF),
+            "A protocol-confirmed direct FF index with stable endpoint identity should be cached."
+        );
+        Assert(
+            DirectDeviceProbeCache.TryGet(movedPath, out byte cachedIndex) && cachedIndex == 0xFF,
+            "The direct index cache should survive endpoint path and path-hash changes."
+        );
+        Assert(
+            !DirectDeviceProbeCache.TryGet(differentDevice, out _),
+            "A different stable endpoint identity must not inherit another device's direct index."
+        );
+        Assert(
+            !DirectDeviceProbeCache.Remember(invalidIndexDevice, 0x01) &&
+            !DirectDeviceProbeCache.TryGet(invalidIndexDevice, out _),
+            "Receiver pairing slots must never enter the direct-device cache."
+        );
+        Assert(
+            !DirectDeviceProbeCache.Remember(unstableIdentity, 0x00) &&
+            !DirectDeviceProbeCache.TryGet(unstableIdentity, out _),
+            "Endpoints without a stable serial or container identity must not be cached."
+        );
+    }
+    finally
+    {
+        DirectDeviceProbeCache.ClearForTests();
+    }
+}
+
 static void TestPersistentReceiverIdentity()
 {
     string tempDirectory = Path.Combine(Path.GetTempPath(), "PowerTray.Tests", Guid.NewGuid().ToString("N"));
@@ -1111,6 +1206,8 @@ await TestRediscoverySchedulerPreservesRequestDuringActivePass();
 await TestRediscoveryArrivalBurstRunsEveryBoundedAttempt();
 await TestRediscoveryIncompleteRetryStopsAfterRecovery();
 TestHidSessionRecoveryPolicy();
+TestRediscoveryPassPrioritizesCreatedSessions();
+TestHidCommandAttemptPolicy();
 TestDeviceTransportPolicy();
 TestNativeSettingsValidation();
 TestCenturionFrameValidation();
@@ -1126,6 +1223,7 @@ await TestUpdaterDetachedSignatureVerificationAsync();
 await TestUpdaterFileHashVerificationAsync();
 TestUpdaterTrustedHosts();
 TestEndpointReceiverIdentityValidation();
+TestDirectDeviceProbeCache();
 TestPersistentReceiverIdentity();
 
 Console.WriteLine("PowerTray.Tests passed.");

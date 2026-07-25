@@ -19,12 +19,12 @@ namespace LGSTrayHID
         private const int COMMAND_QUEUE_TIMEOUT = 5000;
         private const int THREAD_JOIN_TIMEOUT_MS = 2000;
         private const int C54D_COMMAND_TIMEOUT = 600;
-        private const int C54D_COMMAND_ATTEMPTS = 2;
-        private const int DEFAULT_COMMAND_ATTEMPTS = 2;
         private const int COMMAND_RETRY_DELAY_MS = 40;
         private const int ENDPOINT_READY_DELAY_MS = 120;
+        private const int SPECULATIVE_PROBE_TIMEOUT_MS = 150;
+        private const int RECEIVER_DISCOVERY_TIMEOUT_MS = 300;
         private const int RECEIVER_SETTLE_DELAY_MS = 120;
-        private const int RECEIVER_FALLBACK_SETTLE_DELAY_MS = 150;
+        private const int RECEIVER_FALLBACK_SETTLE_DELAY_MS = 50;
         private const ushort LIGHTSPEED_C54D_RECEIVER = 0xC54D;
         private const byte DEVICE_CONNECTION_NOTIFICATION = 0x41;
         private const byte DEVICE_DISCONNECTED_FLAG = 0x40;
@@ -985,6 +985,13 @@ namespace LGSTrayHID
                 {
                     RemoveUninitializedDevice(deviceIdx, device, "missingIdentifier");
                 }
+                else if (Volatile.Read(ref _receiverDetected) == 0 &&
+                         DirectDeviceProbeCache.Remember(_shortEndpoint, deviceIdx))
+                {
+                    NativeDiagnosticsStore.AddEvent(
+                        $"{NativeDiagnosticsStore.FormatHex(_shortEndpoint.ProductId, 4)}: remembered protocol-confirmed direct index={NativeDiagnosticsStore.FormatHex(deviceIdx, 2)}"
+                    );
+                }
             }
             catch (Exception ex)
             {
@@ -1066,11 +1073,51 @@ namespace LGSTrayHID
                 return;
             }
 
+            bool recordTiming = !HasKnownDevices;
+            Stopwatch elapsed = Stopwatch.StartNew();
+            void RecordDiscoveryStage(string stage)
+            {
+                if (recordTiming)
+                {
+                    NativeDiagnosticsStore.AddEvent(
+                        $"{NativeDiagnosticsStore.FormatHex(_shortEndpoint.ProductId, 4)}: discovery stage={stage} elapsedMs={elapsed.ElapsedMilliseconds}"
+                    );
+                }
+            }
+
             await Task.Delay(ENDPOINT_READY_DELAY_MS);
 
             if (await TryDiscoverCenturionAsync())
             {
+                RecordDiscoveryStage("centurionComplete");
                 return;
+            }
+
+            if (DirectDeviceProbeCache.TryGet(_shortEndpoint, out byte cachedDeviceIdx))
+            {
+                RecordDiscoveryStage(
+                    $"directCacheHit index={NativeDiagnosticsStore.FormatHex(cachedDeviceIdx, 2)}"
+                );
+                if (await Ping20(
+                    cachedDeviceIdx,
+                    SPECULATIVE_PROBE_TIMEOUT_MS,
+                    false,
+                    maxAttempts: 1
+                ))
+                {
+                    await QueueDeviceInitAsync(cachedDeviceIdx);
+                    if (IsDeviceInitialized(cachedDeviceIdx))
+                    {
+                        RecordDiscoveryStage(
+                            $"directCacheReady index={NativeDiagnosticsStore.FormatHex(cachedDeviceIdx, 2)}"
+                        );
+                        return;
+                    }
+                }
+
+                RecordDiscoveryStage(
+                    $"directCacheFallback index={NativeDiagnosticsStore.FormatHex(cachedDeviceIdx, 2)}"
+                );
             }
 
             bool receiverResponded = await TryReceiverDiscoveryAsync();
@@ -1078,6 +1125,7 @@ namespace LGSTrayHID
             {
                 Interlocked.Exchange(ref _receiverDetected, 1);
             }
+            RecordDiscoveryStage(receiverResponded ? "receiverDetected" : "receiverNotDetected");
             await Task.Delay(receiverResponded ? RECEIVER_SETTLE_DELAY_MS : RECEIVER_FALLBACK_SETTLE_DELAY_MS);
 
             List<Task> initializationTasks = [];
@@ -1107,9 +1155,32 @@ namespace LGSTrayHID
                     continue;
                 }
 
-                if (await Ping20(deviceIdx, DEFAULT_COMMAND_TIMEOUT, false))
+                if (await Ping20(
+                    deviceIdx,
+                    SPECULATIVE_PROBE_TIMEOUT_MS,
+                    false,
+                    maxAttempts: 1
+                ))
                 {
-                    initializationTasks.Add(QueueDeviceInitAsync(deviceIdx));
+                    RecordDiscoveryStage(
+                        $"probeResponded index={NativeDiagnosticsStore.FormatHex(deviceIdx, 2)}"
+                    );
+                    Task initializationTask = QueueDeviceInitAsync(deviceIdx);
+                    if (!receiverResponded && deviceIdx is 0x00 or 0xFF)
+                    {
+                        await initializationTask;
+                        if (IsDeviceInitialized(deviceIdx))
+                        {
+                            RecordDiscoveryStage(
+                                $"directReady index={NativeDiagnosticsStore.FormatHex(deviceIdx, 2)}"
+                            );
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        initializationTasks.Add(initializationTask);
+                    }
                 }
             }
 
@@ -1117,6 +1188,7 @@ namespace LGSTrayHID
             {
                 await Task.WhenAll(initializationTasks);
             }
+            RecordDiscoveryStage("complete");
         }
 
         private static IEnumerable<byte> GetProbeDeviceIndexes(bool receiverResponded)
@@ -1135,7 +1207,11 @@ namespace LGSTrayHID
 
         private async Task<bool> TryReceiverDiscoveryAsync()
         {
-            byte[] ret = await WriteRead10(_devShort, [0x10, 0xFF, 0x81, 0x02, 0x00, 0x00, 0x00], 1000);
+            byte[] ret = await WriteRead10(
+                _devShort,
+                [0x10, 0xFF, 0x81, 0x02, 0x00, 0x00, 0x00],
+                RECEIVER_DISCOVERY_TIMEOUT_MS
+            );
             NativeDiagnosticsStore.UpdateSession(_diagnostics, x => x.ReceiverDiscoveryResponse = NativeDiagnosticsStore.FormatBytes(ret));
             if (ret.Length < 6 || ret[2] != 0x81 || ret[3] != 0x02)
             {
@@ -1145,7 +1221,11 @@ namespace LGSTrayHID
             byte numDeviceFound = ret[5];
             if (numDeviceFound > 0)
             {
-                _ = await WriteRead10(_devShort, [0x10, 0xFF, 0x80, 0x02, 0x02, 0x00, 0x00], 1000);
+                _ = await WriteRead10(
+                    _devShort,
+                    [0x10, 0xFF, 0x80, 0x02, 0x02, 0x00, 0x00],
+                    RECEIVER_DISCOVERY_TIMEOUT_MS
+                );
             }
 
             return true;
@@ -2179,7 +2259,13 @@ namespace LGSTrayHID
             }
         }
 
-        public async Task<Hidpp20> WriteRead20(HidDevicePtr hidDevicePtr, Hidpp20 buffer, int timeout = DEFAULT_COMMAND_TIMEOUT, bool ignoreHID10 = true)
+        public async Task<Hidpp20> WriteRead20(
+            HidDevicePtr hidDevicePtr,
+            Hidpp20 buffer,
+            int timeout = DEFAULT_COMMAND_TIMEOUT,
+            bool ignoreHID10 = true,
+            int? maxAttempts = null
+        )
         {
             ObjectDisposedException.ThrowIf(_disposeCount > 0, this);
             if (hidDevicePtr == IntPtr.Zero)
@@ -2191,7 +2277,7 @@ namespace LGSTrayHID
             bool targetsShortEndpoint = (nint)hidDevicePtr == (nint)_devShort;
             bool c54dShortRequest = ShouldUseC54dRecovery(targetsShortEndpoint, request, buffer);
             int commandTimeout = c54dShortRequest ? Math.Max(timeout, C54D_COMMAND_TIMEOUT) : timeout;
-            int attempts = c54dShortRequest ? C54D_COMMAND_ATTEMPTS : DEFAULT_COMMAND_ATTEMPTS;
+            int attempts = HidCommandAttemptPolicy.GetAttempts(c54dShortRequest, maxAttempts);
             bool locked = await _commandSemaphore.WaitAsync(COMMAND_QUEUE_TIMEOUT, _lifetimeCts.Token);
             if (!locked)
             {
@@ -2551,7 +2637,12 @@ namespace LGSTrayHID
             );
         }
 
-        public async Task<bool> Ping20(byte deviceId, int timeout = DEFAULT_COMMAND_TIMEOUT, bool ignoreHIDPP10 = true)
+        public async Task<bool> Ping20(
+            byte deviceId,
+            int timeout = DEFAULT_COMMAND_TIMEOUT,
+            bool ignoreHIDPP10 = true,
+            int? maxAttempts = null
+        )
         {
             ObjectDisposedException.ThrowIf(_disposeCount > 0, this);
             if (_devShort == IntPtr.Zero)
@@ -2561,7 +2652,13 @@ namespace LGSTrayHID
 
             byte pingPayload = ++_pingPayload;
             Hidpp20 buffer = new byte[7] { 0x10, deviceId, 0x00, 0x10 | SW_ID, 0x00, 0x00, pingPayload };
-            Hidpp20 ret = await WriteRead20(_devShort, buffer, timeout, ignoreHIDPP10);
+            Hidpp20 ret = await WriteRead20(
+                _devShort,
+                buffer,
+                timeout,
+                ignoreHIDPP10,
+                maxAttempts
+            );
             if (ret.Length == 0 || ret.GetFeatureIndex() == 0x8F)
             {
                 RecordPing(deviceId, false);
