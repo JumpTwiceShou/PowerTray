@@ -36,7 +36,7 @@
 - [x] Close and detach custom tooltips before device-icon disposal.
 - [x] Add focused cache, recovery-policy, and tooltip-disposal tests.
 - [x] Run complete Debug and Release builds/tests serially.
-- [ ] Commit, package, back up, install, and smoke-test the local candidate.
+- [x] Commit, package, back up, install, and smoke-test the local candidate.
 - [ ] Complete maintainer receiver-replug and hover-unplug validation.
 
 ## Verification Evidence
@@ -47,3 +47,9 @@
 - SDK `8.0.423` Debug and Release solution builds completed with zero warnings and errors.
 - Debug and Release `PowerTray.Tests` both passed after the installed runtime exited through its supported background `--shutdown` path.
 - `git diff --check` reported no whitespace errors.
+- Product/task commit: `9ce30bce9c9a63d08949f5f564d20e4da9c6772a` (`fix: accelerate receiver replug and close orphan tooltips`).
+- The unsigned local-only light installer is `bin/Release/receiver-cache-tooltip-disposal-9ce30bc/installer/PowerTraySetup-receiver-cache-tooltip-disposal-1.4.3.exe`: 3,812,704 bytes, SHA-256 `8F63A2A3B818B4AE24A551DD7577991114CD950CD4DBC5686374026C600FA803`.
+- The former 587-file `1.4.3+9bba504...` installation is recoverable at `%TEMP%\PowerTray-1.4.3-before-receiver-cache-tooltip-disposal-20260725-140106`; source and backup file counts matched and all 587 file hashes matched.
+- Silent installation exited `0`. Installed `PowerTray.dll`, `PowerTrayHID.dll`, and `hidapi.dll` hashes exactly match the candidate; UI/helper report `1.4.3+9ce30bc...`, edition remains `light`, and autostart remains disabled.
+- The installed UI/helper are running, `/health` reports `running`, `restartCount=0`, and the currently powered PRO X2 SUPERSTRIKE mouse is published. No matching post-start Application Error, .NET Runtime, or Windows Error Reporting crash event was recorded.
+- No remote, other machine, public tag, release, or asset changed.
