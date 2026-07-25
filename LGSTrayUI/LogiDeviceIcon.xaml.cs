@@ -79,6 +79,8 @@ namespace LGSTrayUI
                         taskbarIcon.TrayToolTip = null;
                     }
                     taskbarIcon.Dispose();
+                    _customTrayToolTipBorder = null;
+                    _customTrayToolTipText = null;
                 }
             }
         }
@@ -123,6 +125,8 @@ namespace LGSTrayUI
         private readonly DispatcherTimer _blinkTimer;
         private bool _blinkVisible = true;
         private TrayToolTipRegistration _toolTipRegistration;
+        private Border? _customTrayToolTipBorder;
+        private TextBlock? _customTrayToolTipText;
 
         internal TaskbarIcon TaskbarIconForTesting => taskbarIcon;
         internal TrayToolTipRegistration ToolTipRegistrationForTesting => _toolTipRegistration;
@@ -188,11 +192,15 @@ namespace LGSTrayUI
 
             if (_toolTipRegistration.UsesCustomContent)
             {
-                if (Resources["PowerTrayCustomTrayToolTipContent"] is not UIElement customContent)
+                if (Resources["PowerTrayCustomTrayToolTipContent"] is not Border customContent
+                    || customContent.Child is not TextBlock customText)
                 {
                     throw new InvalidOperationException("The PowerTray custom tray tooltip resource is missing or invalid.");
                 }
 
+                _customTrayToolTipBorder = customContent;
+                _customTrayToolTipText = customText;
+                ApplyCustomTrayToolTipTheme();
                 taskbarIcon.TrayToolTip = customContent;
                 taskbarIcon.PreviewTrayToolTipOpen += OnPreviewTrayToolTipOpen;
             }
@@ -200,6 +208,8 @@ namespace LGSTrayUI
 
         private void OnPreviewTrayToolTipOpen(object sender, RoutedEventArgs e)
         {
+            ApplyCustomTrayToolTipTheme();
+
             ToolTip? toolTip = taskbarIcon.TrayToolTipResolved;
             if (toolTip == null)
             {
@@ -213,6 +223,37 @@ namespace LGSTrayUI
             toolTip.BorderBrush = Brushes.Transparent;
             toolTip.BorderThickness = new Thickness(0);
             toolTip.Padding = new Thickness(0);
+        }
+
+        private void ApplyCustomTrayToolTipTheme()
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                _ = Dispatcher.BeginInvoke(ApplyCustomTrayToolTipTheme);
+                return;
+            }
+
+            if (_customTrayToolTipBorder == null
+                || _customTrayToolTipText == null
+                || Application.Current == null)
+            {
+                return;
+            }
+
+            if (Application.Current.TryFindResource("TooltipBackgroundBrush") is Brush background)
+            {
+                _customTrayToolTipBorder.Background = background;
+            }
+
+            if (Application.Current.TryFindResource("BorderBrushSoft") is Brush border)
+            {
+                _customTrayToolTipBorder.BorderBrush = border;
+            }
+
+            if (Application.Current.TryFindResource("TextBrush") is Brush foreground)
+            {
+                _customTrayToolTipText.Foreground = foreground;
+            }
         }
 
         public static bool ShowBalloonOnFirstIcon(string title, string body)
@@ -304,6 +345,11 @@ namespace LGSTrayUI
 
         private void CheckThemePropertyChanged(object? sender, PropertyChangedEventArgs e)
         {
+            if (e.PropertyName is nameof(CheckTheme.LightTheme) or nameof(CheckTheme.ThemeMode))
+            {
+                ApplyCustomTrayToolTipTheme();
+            }
+
             if (e.PropertyName is nameof(CheckTheme.TaskbarLightTheme) or nameof(CheckTheme.TaskbarThemeSuffix))
             {
                 DrawBatteryIcon();

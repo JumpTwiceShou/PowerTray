@@ -26,6 +26,14 @@ static void Assert(bool condition, string message)
     }
 }
 
+static void AssertBrushColor(Brush? brush, Color expected, string message)
+{
+    Assert(
+        brush is SolidColorBrush solidColorBrush && solidColorBrush.Color == expected,
+        message
+    );
+}
+
 static void TestXmlEscaping()
 {
     LogiDevice device = new()
@@ -534,6 +542,7 @@ static void TestProductionTrayToolTipModeLifecycleCore()
                     PowerTrayUserSettings persisted = new()
                     {
                         Language = "zh-CN",
+                        ThemeMode = "light",
                         TrayToolTipMode = TrayToolTipModePolicy.Serialize(mode),
                     };
                     File.WriteAllText(
@@ -543,6 +552,9 @@ static void TestProductionTrayToolTipModeLifecycleCore()
 
                     UserSettingsWrapper settings = new();
                     Assert(settings.EffectiveTrayToolTipMode == mode, $"The icon factory should freeze {mode} as the process-effective mode.");
+                    ThemeService? liveThemeService = mode == TrayToolTipMode.PowerTrayCustom
+                        ? new ThemeService(settings)
+                        : null;
                     AlertStateService alertState = new();
                     LogiDeviceIconFactory iconFactory = new(
                         Microsoft.Extensions.Options.Options.Create(new AppSettings()),
@@ -589,8 +601,36 @@ static void TestProductionTrayToolTipModeLifecycleCore()
                             Assert(taskbarIcon.TrayToolTip != null, "PowerTrayCustom mode must register the themed WPF tooltip content.");
                             Assert(string.IsNullOrEmpty(taskbarIcon.ToolTipText), "PowerTrayCustom mode must not also register Shell tooltip text.");
                             Assert(registration.SubscribesCustomOpenEvent, "PowerTrayCustom mode must subscribe only to its custom-open event.");
+                            Border customSurface = taskbarIcon.TrayToolTip as Border
+                                ?? throw new InvalidOperationException("PowerTrayCustom mode should expose the production tooltip surface.");
+                            TextBlock customText = customSurface.Child as TextBlock
+                                ?? throw new InvalidOperationException("The production custom tooltip surface should retain its text content.");
+
+                            AssertBrushColor(customSurface.Background, Color.FromRgb(0xFF, 0xFF, 0xFF), "The custom tooltip should start with the light background.");
+                            AssertBrushColor(customSurface.BorderBrush, Color.FromRgb(0xD7, 0xDE, 0xE8), "The custom tooltip should start with the light border.");
+                            AssertBrushColor(customText.Foreground, Color.FromRgb(0x11, 0x18, 0x27), "The custom tooltip should start with the light foreground.");
+
+                            settings.ThemeMode = "dark";
+                            AssertBrushColor(customSurface.Background, Color.FromRgb(0x1B, 0x1F, 0x26), "An existing custom tooltip must update to the dark background immediately.");
+                            AssertBrushColor(customSurface.BorderBrush, Color.FromRgb(0x34, 0x3B, 0x46), "An existing custom tooltip must update to the dark border immediately.");
+                            AssertBrushColor(customText.Foreground, Color.FromRgb(0xF3, 0xF4, 0xF6), "An existing custom tooltip must update to the dark foreground immediately.");
+
+                            settings.ThemeMode = "light";
+                            AssertBrushColor(customSurface.Background, Color.FromRgb(0xFF, 0xFF, 0xFF), "An existing custom tooltip must update back to the light background immediately.");
+                            AssertBrushColor(customText.Foreground, Color.FromRgb(0x11, 0x18, 0x27), "An existing custom tooltip must update back to the light foreground immediately.");
+
+                            settings.ThemeMode = "dark";
+                            customSurface.Background = Brushes.White;
+                            customSurface.BorderBrush = Brushes.White;
+                            customText.Foreground = Brushes.Black;
+                            taskbarIcon.RaiseEvent(new RoutedEventArgs(TaskbarIcon.PreviewTrayToolTipOpenEvent));
+                            AssertBrushColor(customSurface.Background, Color.FromRgb(0x1B, 0x1F, 0x26), "Preview-open must correct a stale custom tooltip background.");
+                            AssertBrushColor(customSurface.BorderBrush, Color.FromRgb(0x34, 0x3B, 0x46), "Preview-open must correct a stale custom tooltip border.");
+                            AssertBrushColor(customText.Foreground, Color.FromRgb(0xF3, 0xF4, 0xF6), "Preview-open must correct a stale custom tooltip foreground.");
+
                             resolvedCustomToolTip = taskbarIcon.TrayToolTipResolved;
                             Assert(resolvedCustomToolTip != null, "PowerTrayCustom mode should resolve an actual WPF ToolTip.");
+                            GC.KeepAlive(liveThemeService);
                             break;
                     }
 
