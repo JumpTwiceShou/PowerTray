@@ -80,18 +80,10 @@ namespace LGSTrayUI
 
         private string BuildBatteryToolTipDetail()
         {
-            string powerStatus = PowerSupplyStatus switch
-            {
-                LGSTrayPrimitives.PowerSupplyStatus.POWER_SUPPLY_STATUS_CHARGING => _loc["BatteryStatusCharging"],
-                LGSTrayPrimitives.PowerSupplyStatus.POWER_SUPPLY_STATUS_FULL => _loc["BatteryStatusFull"],
-                LGSTrayPrimitives.PowerSupplyStatus.POWER_SUPPLY_STATUS_NOT_CHARGING => _loc["BatteryStatusNotCharging"],
-                LGSTrayPrimitives.PowerSupplyStatus.POWER_SUPPLY_STATUS_DISCHARGING => _loc["BatteryStatusDischarging"],
-                _ => _loc["BatteryStatusUnknown"],
-            };
 #if DEBUG
-            return $"{BatteryPercentage:f2}%{BatteryVoltageText()} · {powerStatus} · {LastUpdate}";
+            return $"{BatteryPercentage:f2}%{BatteryVoltageText()} - {LastUpdate}";
 #else
-            return $"{BatteryPercentage:f2}%{BatteryVoltageText()} · {powerStatus}";
+            return $"{BatteryPercentage:f2}%{BatteryVoltageText()}";
 #endif
         }
 

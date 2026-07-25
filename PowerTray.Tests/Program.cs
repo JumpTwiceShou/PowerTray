@@ -280,6 +280,7 @@ static void TestLocalizationCatalogs()
     string[] zhKeys = zh.Keys.Order(StringComparer.Ordinal).ToArray();
     Assert(zhKeys.SequenceEqual(en.Keys.Order(StringComparer.Ordinal)), "English localization keys must exactly match the Chinese semantic source.");
     Assert(zhKeys.SequenceEqual(ja.Keys.Order(StringComparer.Ordinal)), "Japanese localization keys must exactly match the Chinese semantic source.");
+    Assert(!zhKeys.Any(key => key.StartsWith("BatteryStatus", StringComparison.Ordinal)), "Tray tooltip power-status localization must not remain after the status text is removed.");
 
     foreach (string key in zhKeys)
     {
@@ -294,6 +295,22 @@ static void TestLocalizationCatalogs()
     Assert(ja["Alias"] == "カスタムデバイス名", "Japanese Alias must preserve the Chinese meaning of a custom device name.");
     Assert(ja["Port9010Status"].Contains("接続可能", StringComparison.Ordinal), "Japanese G Hub status must preserve the Chinese reachable-state meaning.");
     Assert(ja["ConfirmForgetDeviceBody"].EndsWith("続行しますか？", StringComparison.Ordinal), "Japanese device-removal text must preserve the Chinese confirmation question.");
+    Assert(
+        zh["TrayToolTipDescription"].Contains("Windows 11", StringComparison.Ordinal) &&
+        zh["TrayToolTipDescription"].Contains("屏幕左上角", StringComparison.Ordinal) &&
+        zh["TrayToolTipDescription"].Contains("Windows 原生悬浮或关闭悬浮", StringComparison.Ordinal),
+        "The Simplified Chinese hover note must state the Windows 11 top-left risk and both avoidance choices."
+    );
+    Assert(
+        en["TrayToolTipDescription"].Contains("top-left", StringComparison.OrdinalIgnoreCase) &&
+        en["TrayToolTipDescription"].Contains("disable hover", StringComparison.OrdinalIgnoreCase),
+        "The English hover note must preserve the top-left warning and disable option."
+    );
+    Assert(
+        ja["TrayToolTipDescription"].Contains("画面左上", StringComparison.Ordinal) &&
+        ja["TrayToolTipDescription"].Contains("無効", StringComparison.Ordinal),
+        "The Japanese hover note must preserve the top-left warning and disable option."
+    );
 
     string tempDirectory = Path.Combine(Path.GetTempPath(), $"PowerTray-bootstrap-loc-{Guid.NewGuid():N}");
     try
@@ -496,6 +513,16 @@ static void TestProductionTrayToolTipModeLifecycleCore()
                 Source = new Uri("/PowerTray;component/NotifyIconResources.xaml", UriKind.Relative),
             });
             ThemeService.ApplyCurrentResources();
+            double ordinaryComboWidth = (double)application.Resources["UISettingsComboWidth"];
+            double trayToolTipComboWidth = (double)application.Resources["UITrayToolTipModeComboWidth"];
+            Assert(
+                Math.Abs(
+                    trayToolTipComboWidth -
+                    ordinaryComboWidth -
+                    (2.0 * 14.0 * ThemeService.CurrentScale)
+                ) < 0.001,
+                "The tray-hover mode selector must be exactly two base CJK glyph widths wider than ordinary settings selectors."
+            );
 
             foreach (TrayToolTipMode mode in Enum.GetValues<TrayToolTipMode>())
             {
@@ -532,6 +559,10 @@ static void TestProductionTrayToolTipModeLifecycleCore()
                         4010,
                         DateTimeOffset.UtcNow
                     ));
+                    Assert(device.DisplayToolTipString.Contains("73", StringComparison.Ordinal), "Tray hover should retain the battery percentage.");
+                    Assert(device.DisplayToolTipString.Contains("4.01 V", StringComparison.Ordinal), "Tray hover should retain the optional battery voltage.");
+                    Assert(!device.DisplayToolTipString.Contains("充电中", StringComparison.Ordinal), "Tray hover must not add a localized charging state.");
+                    Assert(!device.DisplayToolTipString.Contains(" · ", StringComparison.Ordinal), "Tray hover must not add status separators.");
                     device.IsChecked = true;
 
                     LogiDeviceIcon firstIcon = device.TaskbarIconForTesting

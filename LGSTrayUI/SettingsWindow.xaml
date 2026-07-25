@@ -547,7 +547,7 @@
                                           SelectedValue="{Binding SavedTrayToolTipMode, Mode=OneWay}"
                                           SelectedValuePath="Mode"
                                           TextSearch.TextPath="Name"
-                                          Width="{DynamicResource UISettingsComboWidth}"
+                                          Width="{DynamicResource UITrayToolTipModeComboWidth}"
                                           Margin="0,10,0,6"
                                           HorizontalAlignment="Left"
                                           SelectionChanged="OnTrayToolTipModeSelectionChanged">

@@ -7,6 +7,9 @@ namespace LGSTrayUI;
 
 public sealed class ThemeService
 {
+    internal const double SettingsComboWidthBase = 176.0;
+    internal const double TrayToolTipModeComboWidthBase = 204.0;
+
     private readonly UserSettingsWrapper _settings;
     private static string _language = "en-US";
     private static string _uiScaleMode = "standard";
@@ -156,7 +159,8 @@ public sealed class ThemeService
         resources["UIMonospaceFontSize"] = 12.5 * scale;
         resources["UIButtonMinHeight"] = 32.0 * scale;
         resources["UIInputMinHeight"] = 34.0 * scale;
-        resources["UISettingsComboWidth"] = 176.0 * scale;
+        resources["UISettingsComboWidth"] = SettingsComboWidthBase * scale;
+        resources["UITrayToolTipModeComboWidth"] = TrayToolTipModeComboWidthBase * scale;
         resources["UIComboItemMinHeight"] = 30.0 * scale;
         resources["UIPercentBadgeWidth"] = 56.0 * scale;
         resources["UIPercentBadgeHeight"] = 30.0 * scale;
