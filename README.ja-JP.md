@@ -91,6 +91,14 @@ PowerTray は Logitech ワイヤレスデバイスのバッテリー状態を表
 
 数値モードでは、現在のバッテリー残量をトレイアイコン内に直接表示します。右クリックしたアイコンに応じて、トレイメニューはグローバル設定またはデバイス別の上書き設定を切り替えます。
 
+### 低バッテリー通知アイコン
+
+| マウス | キーボード | ヘッドセット |
+| --- | --- | --- |
+| <img src="Assets/readme/low-battery-mouse.png" alt="Mouse low-battery alert icon" width="64"> | <img src="Assets/readme/low-battery-keyboard.png" alt="Keyboard low-battery alert icon" width="64"> | <img src="Assets/readme/low-battery-headset.png" alt="Headset low-battery alert icon" width="64"> |
+
+デバイスが設定した低バッテリーしきい値に達し、トレイアイコンの点滅が有効な場合、PowerTray は通常のアイコンと赤いバッテリー通知アイコンを交互に表示します。マウス、キーボード、ヘッドセットの形はそのまま残るため、どのデバイスのバッテリーが少ないかをすぐ確認できます。
+
 ### 反応型アイコン
 
 ![Device type icons](https://user-images.githubusercontent.com/24492062/138284660-95949372-c59a-4569-9545-0cfe0506d1fb.png)

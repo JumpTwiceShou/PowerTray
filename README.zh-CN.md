@@ -91,6 +91,14 @@ PowerTray は Logitech ワイヤレスデバイスのバッテリー状態を表
 
 数字模式会直接在托盘图标中显示当前电量百分比。右键菜单会根据当前右键的图标，在全局数字电量设置和单设备覆盖设置之间自动选择。
 
+### 低电量提醒图标
+
+| 鼠标 | 键盘 | 耳机 |
+| --- | --- | --- |
+| <img src="Assets/readme/low-battery-mouse.png" alt="鼠标低电量提醒图标" width="64"> | <img src="Assets/readme/low-battery-keyboard.png" alt="键盘低电量提醒图标" width="64"> | <img src="Assets/readme/low-battery-headset.png" alt="耳机低电量提醒图标" width="64"> |
+
+当设备达到设定的低电量阈值且已启用托盘闪烁时，PowerTray 会在正常图标和红色电池提醒图标之间交替显示。图标仍保留鼠标、键盘或耳机的设备轮廓，方便快速确认是哪台设备电量不足。
+
 ### 响应式图标
 
 ![设备类型图标](https://user-images.githubusercontent.com/24492062/138284660-95949372-c59a-4569-9545-0cfe0506d1fb.png)

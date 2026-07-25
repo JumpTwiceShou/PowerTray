@@ -95,6 +95,14 @@ Selected devices can be shown as separate tray icons. When at least one device i
 
 Numeric mode displays the current battery percentage directly in the tray icon. The tray menu can control the global numeric display option or a device-specific override depending on which icon was right-clicked.
 
+### Low-Battery Alert Icons
+
+| Mouse | Keyboard | Headset |
+| --- | --- | --- |
+| <img src="Assets/readme/low-battery-mouse.png" alt="Mouse low-battery alert icon" width="64"> | <img src="Assets/readme/low-battery-keyboard.png" alt="Keyboard low-battery alert icon" width="64"> | <img src="Assets/readme/low-battery-headset.png" alt="Headset low-battery alert icon" width="64"> |
+
+When a device reaches its configured low-battery threshold and tray blinking is enabled, PowerTray alternates its normal icon with a red battery alert frame. The mouse, keyboard, or headset glyph remains visible so the device can still be identified at a glance.
+
 ### Reactive Icons
 
 ![Device type icons](https://user-images.githubusercontent.com/24492062/138284660-95949372-c59a-4569-9545-0cfe0506d1fb.png)
