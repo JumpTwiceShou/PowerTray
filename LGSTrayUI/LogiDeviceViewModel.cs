@@ -48,6 +48,8 @@ namespace LGSTrayUI
 
         private LogiDeviceIcon? taskbarIcon;
 
+        internal LogiDeviceIcon? TaskbarIconForTesting => taskbarIcon;
+
         public string BaseDisplayName => _userSettings.GetDisplayName(DeviceId, DeviceName);
         public string DisplayName => IsOnline ? BaseDisplayName : $"{BaseDisplayName} ({_loc["Offline"]})";
         public string OriginalNameDisplay => _userSettings.GetOriginalName(DeviceId, DeviceName);
@@ -55,13 +57,11 @@ namespace LGSTrayUI
         public bool ShowOriginalName => HasAlias && !string.Equals(BaseDisplayName, OriginalNameDisplay, StringComparison.Ordinal);
 
         public string DisplayToolTipString => BatteryPercentage >= 0
-            ?
-#if DEBUG
-            FormatToolTipDetail(DisplayName, $"{BatteryPercentage:f2}%{BatteryVoltageText()} - {LastUpdate}")
-#else
-            FormatToolTipDetail(DisplayName, $"{BatteryPercentage:f2}%{BatteryVoltageText()}")
-#endif
+            ? FormatToolTipDetail(DisplayName, BuildBatteryToolTipDetail())
             : FormatToolTipDetail(DisplayName, _loc["BatteryUnknown"]);
+
+        public string NativeToolTipString =>
+            NativeTrayToolTipText.Limit(DisplayToolTipString);
 
         internal static string FormatToolTipDetail(string displayName, string detail) =>
             $"{displayName}{GetToolTipSeparator(displayName)}{detail}";
@@ -77,6 +77,29 @@ namespace LGSTrayUI
         }
 
         private string BatteryVoltageText() => BatteryVoltage > 0 ? $", {BatteryVoltage:0.00} V" : string.Empty;
+
+        private string BuildBatteryToolTipDetail()
+        {
+            string powerStatus = PowerSupplyStatus switch
+            {
+                LGSTrayPrimitives.PowerSupplyStatus.POWER_SUPPLY_STATUS_CHARGING => _loc["BatteryStatusCharging"],
+                LGSTrayPrimitives.PowerSupplyStatus.POWER_SUPPLY_STATUS_FULL => _loc["BatteryStatusFull"],
+                LGSTrayPrimitives.PowerSupplyStatus.POWER_SUPPLY_STATUS_NOT_CHARGING => _loc["BatteryStatusNotCharging"],
+                LGSTrayPrimitives.PowerSupplyStatus.POWER_SUPPLY_STATUS_DISCHARGING => _loc["BatteryStatusDischarging"],
+                _ => _loc["BatteryStatusUnknown"],
+            };
+#if DEBUG
+            return $"{BatteryPercentage:f2}%{BatteryVoltageText()} · {powerStatus} · {LastUpdate}";
+#else
+            return $"{BatteryPercentage:f2}%{BatteryVoltageText()} · {powerStatus}";
+#endif
+        }
+
+        private void NotifyToolTipProperties()
+        {
+            OnPropertyChanged(nameof(DisplayToolTipString));
+            OnPropertyChanged(nameof(NativeToolTipString));
+        }
 
         private static string GetToolTipSeparator(string displayName)
         {
@@ -145,7 +168,7 @@ namespace LGSTrayUI
             OnPropertyChanged(nameof(OriginalNameDisplay));
             OnPropertyChanged(nameof(HasAlias));
             OnPropertyChanged(nameof(ShowOriginalName));
-            OnPropertyChanged(nameof(DisplayToolTipString));
+            NotifyToolTipProperties();
         }
 
         public void MarkPresence()
@@ -153,13 +176,13 @@ namespace LGSTrayUI
             LastSeenUtc = DateTimeOffset.UtcNow;
             IsOnline = true;
             OnPropertyChanged(nameof(LastSeenUtc));
-            OnPropertyChanged(nameof(DisplayToolTipString));
+            NotifyToolTipProperties();
         }
 
         public void MarkOffline()
         {
             IsOnline = false;
-            OnPropertyChanged(nameof(DisplayToolTipString));
+            NotifyToolTipProperties();
         }
 
         public void UpdateState(InitMessage initMessage)
@@ -185,7 +208,7 @@ namespace LGSTrayUI
             BatteryVoltage = updateMessage.batteryMVolt / 1000.0;
             BatteryMileage = updateMessage.Mileage;
             LastUpdate = updateMessage.updateTime;
-            OnPropertyChanged(nameof(DisplayToolTipString));
+            NotifyToolTipProperties();
         }
 
         public void Dispose()

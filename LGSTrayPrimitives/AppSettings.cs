@@ -1,8 +1,3 @@
-using System.Net;
-using System.Net.Sockets;
-using System.Security.Cryptography;
-using System.Text;
-
 namespace LGSTrayPrimitives;
 
 public class AppSettings
@@ -51,46 +46,22 @@ public class HttpServerSettings
 
     public bool UseIpv6 { get; set; }
 
-    public bool IsRemoteAccessConfigured => AllowRemote && AccessToken.Length >= 32;
+    // Retained for configuration-file compatibility. PowerTray 1.5.0 deliberately
+    // keeps the device API local-only even when an older file requests remote mode.
+    public bool IsRemoteAccessConfigured => false;
 
-    public bool RequiresAuthentication => !IsLoopbackHost(GetBindAddress());
+    public bool RequiresAuthentication => false;
 
     public string UrlPrefix => $"http://{GetBindAddress()}:{Port}";
 
     public bool IsAuthorized(string? suppliedToken)
     {
-        if (!RequiresAuthentication)
-        {
-            return true;
-        }
-
-        if (!IsRemoteAccessConfigured || string.IsNullOrWhiteSpace(suppliedToken))
-        {
-            return false;
-        }
-
-        byte[] expected = Encoding.UTF8.GetBytes(AccessToken);
-        byte[] supplied = Encoding.UTF8.GetBytes(suppliedToken.Trim());
-        return expected.Length == supplied.Length && CryptographicOperations.FixedTimeEquals(expected, supplied);
+        return true;
     }
 
     private string GetBindAddress()
     {
-        if (!IsRemoteAccessConfigured || !AllowRemote)
-        {
-            return IsLoopbackHost(_addr) ? NormalizeLoopback(_addr) : "localhost";
-        }
-
-        if (_addr == "0.0.0.0")
-        {
-            return "+";
-        }
-
-        string normalized = _addr.Trim().Trim('[', ']');
-        return IPAddress.TryParse(normalized, out IPAddress? address) &&
-               address.AddressFamily == AddressFamily.InterNetworkV6
-            ? $"[{normalized}]"
-            : _addr;
+        return IsLoopbackHost(_addr) ? NormalizeLoopback(_addr) : "localhost";
     }
 
     private static string NormalizeLoopback(string host)

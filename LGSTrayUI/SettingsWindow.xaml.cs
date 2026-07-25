@@ -68,6 +68,18 @@ public partial class SettingsWindow : Window
         }
     }
 
+    private void OnTrayToolTipModeSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!IsLoaded ||
+            sender is not ComboBox { SelectedValue: TrayToolTipMode selectedMode } ||
+            _viewModel == null)
+        {
+            return;
+        }
+
+        _viewModel.ApplyTrayToolTipModeFromUser(selectedMode, this);
+    }
+
     private void OnUiScaleDragCompleted(object sender, DragCompletedEventArgs e)
     {
         CommitUiScale();

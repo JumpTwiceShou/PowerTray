@@ -4,13 +4,22 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace LGSTrayPrimitives.IPC;
 
+internal static class MessagePipeDiagnosticsPolicy
+{
+#if DEBUG
+    public const bool CaptureStackTrace = true;
+#else
+    public const bool CaptureStackTrace = false;
+#endif
+}
+
 public static class MessagePipeHelper
 {
     public static void AddLGSMessagePipe(this IServiceCollection services, bool hostAsServer = false)
     {
         services.AddMessagePipe(options =>
         {
-            options.EnableCaptureStackTrace = true;
+            options.EnableCaptureStackTrace = MessagePipeDiagnosticsPolicy.CaptureStackTrace;
         });
 
         if (hostAsServer)
@@ -35,7 +44,7 @@ public static class MessagePipeHelper
         ServiceCollection services = new();
         services.AddMessagePipe(options =>
         {
-            options.EnableCaptureStackTrace = true;
+            options.EnableCaptureStackTrace = MessagePipeDiagnosticsPolicy.CaptureStackTrace;
         })
         .AddNamedPipeInterprocess(pipeName, config =>
         {

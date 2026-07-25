@@ -294,39 +294,41 @@ namespace LGSTrayHID
             Task pollTask = Task.Run(async () =>
             {
                 CancellationToken cancellationToken = Parent.LifetimeToken;
-                try
-                {
-                    if (_getBatteryAsync == null) { return; }
+                if (_getBatteryAsync == null) { return; }
 
-                    if (delayFirstBatteryRetry)
+                if (delayFirstBatteryRetry)
+                {
+                    try
                     {
                         await Task.Delay(1000, cancellationToken);
                     }
-
-                    while (!cancellationToken.IsCancellationRequested)
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                     {
-                        var now = DateTimeOffset.Now;
+                        return;
+                    }
+                }
+
+                await BatteryPollingLoop.RunAsync(
+                    async token =>
+                    {
+                        DateTimeOffset now = DateTimeOffset.Now;
 #if DEBUG
-                        var expectedUpdateTime = lastUpdate.AddSeconds(1);
+                        DateTimeOffset expectedUpdateTime = lastUpdate.AddSeconds(1);
 #else
-                        var expectedUpdateTime = lastUpdate.AddSeconds(GlobalSettings.settings.PollPeriod);
+                        DateTimeOffset expectedUpdateTime = lastUpdate.AddSeconds(GlobalSettings.settings.PollPeriod);
 #endif
                         if (now < expectedUpdateTime)
                         {
-                            await Task.Delay((int)(expectedUpdateTime - now).TotalMilliseconds, cancellationToken);
+                            await Task.Delay(expectedUpdateTime - now, token);
                         }
-
-                        await UpdateBattery();
-                        await Task.Delay(GlobalSettings.settings.RetryTime * 1000, cancellationToken);
-                    }
-                }
-                catch (OperationCanceledException)
-                {
-                }
-                catch (Exception ex)
-                {
-                    NativeDiagnosticsStore.RecordError($"Battery poll failed for {NativeDiagnosticsStore.HashForDiagnostics(Identifier)}: {ex.GetType().Name}: {ex.Message}");
-                }
+                    },
+                    _ => UpdateBattery(),
+                    TimeSpan.FromSeconds(GlobalSettings.settings.RetryTime),
+                    ex => NativeDiagnosticsStore.RecordError(
+                        $"Battery poll failed for {NativeDiagnosticsStore.HashForDiagnostics(Identifier)}: {ex.GetType().Name}: {ex.Message}"
+                    ),
+                    cancellationToken
+                );
             }, Parent.LifetimeToken);
             Parent.TrackBackgroundTask(pollTask);
         }

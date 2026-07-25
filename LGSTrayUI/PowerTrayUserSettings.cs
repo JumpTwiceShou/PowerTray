@@ -6,10 +6,11 @@ namespace LGSTrayUI;
 
 public sealed class PowerTrayUserSettings
 {
-    public int SchemaVersion { get; set; } = 1;
+    public int SchemaVersion { get; set; } = 2;
     public string Language { get; set; } = "en-US";
     public string ThemeMode { get; set; } = "system";
     public string UiScaleMode { get; set; } = "standard";
+    public string TrayToolTipMode { get; set; } = nameof(LGSTrayUI.TrayToolTipMode.PowerTrayCustom);
     public bool NumericDisplay { get; set; }
     public bool AutoStart { get; set; }
     public bool AutoCheckUpdates { get; set; } = true;

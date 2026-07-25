@@ -1,6 +1,9 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Text.Json;
 
 namespace LGSTrayUI;
 
@@ -25,18 +28,54 @@ public sealed class LocalizationService : ObservableObject
 
     public string this[string key] => Translate(key);
 
+    internal static IReadOnlyDictionary<string, string> GetCatalogForTesting(string language) =>
+        GetCatalog(language);
+
+    internal static string TranslateBootstrap(string key)
+    {
+        string language = CultureInfo.CurrentUICulture.Name;
+        try
+        {
+            if (File.Exists(PowerTrayConstants.SettingsPath))
+            {
+                using JsonDocument settings = JsonDocument.Parse(File.ReadAllText(PowerTrayConstants.SettingsPath));
+                if (settings.RootElement.TryGetProperty("Language", out JsonElement languageElement) &&
+                    languageElement.ValueKind == JsonValueKind.String &&
+                    !string.IsNullOrWhiteSpace(languageElement.GetString()))
+                {
+                    language = languageElement.GetString()!;
+                }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            // Bootstrap localization is best effort because this path is used to
+            // report a different startup-settings failure.
+        }
+
+        IReadOnlyDictionary<string, string> catalog = GetCatalog(language);
+        return catalog.TryGetValue(key, out string? value)
+            ? value
+            : EnUs.TryGetValue(key, out string? fallback) ? fallback : key;
+    }
+
     public string Translate(string key)
     {
-        IReadOnlyDictionary<string, string> dict = _settings.Language switch
-        {
-            string language when language.Equals("zh-CN", StringComparison.OrdinalIgnoreCase) => ZhCn,
-            string language when language.Equals("ja-JP", StringComparison.OrdinalIgnoreCase) => JaJp,
-            _ => EnUs,
-        };
+        IReadOnlyDictionary<string, string> dict = GetCatalog(_settings.Language);
 
         return dict.TryGetValue(key, out string? value)
             ? value
             : EnUs.TryGetValue(key, out string? fallback) ? fallback : key;
+    }
+
+    private static IReadOnlyDictionary<string, string> GetCatalog(string language)
+    {
+        return language switch
+        {
+            string value when value.StartsWith("zh", StringComparison.OrdinalIgnoreCase) => ZhCn,
+            string value when value.StartsWith("ja", StringComparison.OrdinalIgnoreCase) => JaJp,
+            _ => EnUs,
+        };
     }
 
     private static readonly IReadOnlyDictionary<string, string> EnUs = new Dictionary<string, string>
@@ -70,6 +109,19 @@ public sealed class LocalizationService : ObservableObject
         ["StartWithWindows"] = "Start with Windows",
         ["AutoCheckUpdates"] = "Check for updates automatically",
         ["NumericIcon"] = "Show battery percentage in the tray icon",
+        ["TrayToolTipDisplay"] = "Tray hover display",
+        ["TrayToolTipModeDisabled"] = "Disable hover display",
+        ["TrayToolTipModeWindowsNative"] = "Windows native hover",
+        ["TrayToolTipModePowerTrayCustom"] = "PowerTray custom hover",
+        ["TrayToolTipDescription"] = "Windows native hover is managed by the system tray, so its appearance and display time follow Windows. PowerTray custom hover supports the application theme and complete information. Changing the hover implementation requires recreating the tray icons and therefore takes effect after PowerTray restarts.",
+        ["TrayToolTipRestartPending"] = "Takes effect after restart",
+        ["TrayToolTipRestartTitle"] = "Restart PowerTray required",
+        ["TrayToolTipRestartBody"] = "The tray hover display mode takes effect after the tray icons are recreated. Restart PowerTray now?",
+        ["TrayToolTipRestartDetail"] = "Native hover is managed by Windows Shell, while custom hover is managed by WPF Popup. Restarting fully clears the previous tray registration, Popup, and event subscriptions, preventing overlapping hover displays or a remnant in the top-left corner of the screen.",
+        ["RestartNow"] = "Restart now",
+        ["RestartLater"] = "Restart later",
+        ["RestartFailedTitle"] = "PowerTray restart failed",
+        ["RestartFailedBody"] = "The new PowerTray process could not be started. The current PowerTray instance will keep running, and the saved hover mode will take effect on the next normal start.",
         ["FollowGlobalNumericIcon"] = "Use global tray-icon display style",
         ["ConfirmForgetDeviceTitle"] = "Forget this device?",
         ["ConfirmForgetDeviceBody"] = "This will remove saved settings and history for {0}. Continue?",
@@ -102,6 +154,11 @@ public sealed class LocalizationService : ObservableObject
         ["LastUpdate"] = "Last updated",
         ["Battery"] = "Battery",
         ["BatteryUnknown"] = "Battery unknown",
+        ["BatteryStatusCharging"] = "Charging",
+        ["BatteryStatusFull"] = "Fully charged",
+        ["BatteryStatusNotCharging"] = "Not charging",
+        ["BatteryStatusDischarging"] = "Discharging",
+        ["BatteryStatusUnknown"] = "Status unknown",
         ["NoDevices"] = "No supported Logitech devices found yet.",
         ["Diagnostics"] = "Diagnostics",
         ["ExportDiagnostics"] = "Export diagnostics",
@@ -135,6 +192,7 @@ public sealed class LocalizationService : ObservableObject
         ["HttpRemoteEnabledTitle"] = "Remote HTTP access enabled",
         ["HttpRemoteEnabledBody"] = "PowerTray's device API is listening beyond this PC. Keep the configured access token private and restrict the port with your firewall.",
         ["NoInstallerAsset"] = "The latest release does not include a PowerTray installer.",
+        ["UpdateSignatureInvalid"] = "The release checksum signature is invalid.",
         ["UpdateChecksumInvalid"] = "The release checksum file is missing a matching installer filename.",
         ["UpdateChecksumMismatch"] = "The downloaded installer does not match the release checksum.",
         ["DownloadUpdate"] = "Download",
@@ -194,6 +252,19 @@ public sealed class LocalizationService : ObservableObject
         ["StartWithWindows"] = "开机自启动",
         ["AutoCheckUpdates"] = "自动检查更新",
         ["NumericIcon"] = "托盘图标显示电量百分比",
+        ["TrayToolTipDisplay"] = "托盘悬浮显示",
+        ["TrayToolTipModeDisabled"] = "关闭悬浮",
+        ["TrayToolTipModeWindowsNative"] = "Windows 原生悬浮",
+        ["TrayToolTipModePowerTrayCustom"] = "PowerTray 自定义悬浮",
+        ["TrayToolTipDescription"] = "Windows 原生悬浮由系统托盘管理，外观和显示时间跟随 Windows；PowerTray 自定义悬浮支持应用主题和完整信息。切换悬浮实现需要重新创建托盘图标，因此将在重启 PowerTray 后生效。",
+        ["TrayToolTipRestartPending"] = "重启后生效",
+        ["TrayToolTipRestartTitle"] = "需要重启 PowerTray",
+        ["TrayToolTipRestartBody"] = "托盘悬浮显示模式需要在重新创建托盘图标后生效。是否立即重启 PowerTray？",
+        ["TrayToolTipRestartDetail"] = "原生悬浮由 Windows Shell 管理，自定义悬浮由 WPF Popup 管理。重启可以确保旧托盘注册、Popup 和事件订阅被完整清理，避免悬浮重叠或残留在屏幕左上角。",
+        ["RestartNow"] = "立即重启",
+        ["RestartLater"] = "稍后重启",
+        ["RestartFailedTitle"] = "PowerTray 重启失败",
+        ["RestartFailedBody"] = "无法启动新的 PowerTray 进程。当前 PowerTray 将继续运行，已保存的悬浮模式会在下次正常启动时生效。",
         ["GlobalDefaults"] = "默认提醒设置",
         ["DefaultThreshold"] = "默认低电量提醒阈值",
         ["WindowsNotification"] = "系统通知",
@@ -223,6 +294,11 @@ public sealed class LocalizationService : ObservableObject
         ["LastUpdate"] = "最后更新于",
         ["Battery"] = "电量",
         ["BatteryUnknown"] = "电量未知",
+        ["BatteryStatusCharging"] = "充电中",
+        ["BatteryStatusFull"] = "已充满",
+        ["BatteryStatusNotCharging"] = "未充电",
+        ["BatteryStatusDischarging"] = "放电中",
+        ["BatteryStatusUnknown"] = "状态未知",
         ["NoDevices"] = "尚未发现受支持的 Logitech 设备。",
         ["Diagnostics"] = "诊断",
         ["ExportDiagnostics"] = "导出诊断",
@@ -242,12 +318,12 @@ public sealed class LocalizationService : ObservableObject
         ["SettingsLoadErrorBody"] = "读取 appsettings.toml 失败，是否重置为默认配置？",
         ["DiagnosticsExported"] = "诊断已导出",
         ["DiagnosticsExportFailed"] = "诊断导出失败",
-        ["CheckingUpdates"] = "正在检查更新",
+        ["CheckingUpdates"] = "正在检查更新…",
         ["AlreadyLatest"] = "PowerTray 已是最新版本。",
         ["UpdateAvailableTitle"] = "发现新版本",
         ["UpdateAvailableBody"] = "PowerTray {0} 已可下载。",
         ["UpdateAvailableDetail"] = "安装器会保存到你的下载目录。",
-        ["DownloadingUpdate"] = "正在下载更新",
+        ["DownloadingUpdate"] = "正在下载更新…",
         ["UpdateDownloadedTitle"] = "更新已下载",
         ["UpdateDownloadedBody"] = "PowerTray {0} 已下载完成。",
         ["UpdateDownloadedDetail"] = "保存位置：{0}",
@@ -256,6 +332,7 @@ public sealed class LocalizationService : ObservableObject
         ["HttpRemoteEnabledTitle"] = "远程 HTTP 访问已启用",
         ["HttpRemoteEnabledBody"] = "PowerTray 设备 API 已监听本机以外的连接。请妥善保护访问令牌，并使用防火墙限制该端口。",
         ["NoInstallerAsset"] = "最新发布中没有可下载的 PowerTray 安装器。",
+        ["UpdateSignatureInvalid"] = "发布校验文件的签名无效。",
         ["UpdateChecksumInvalid"] = "发布校验文件缺少匹配的安装器文件名。",
         ["UpdateChecksumMismatch"] = "已下载的安装器与发布校验值不一致。",
         ["DownloadUpdate"] = "下载",
@@ -312,9 +389,22 @@ public sealed class LocalizationService : ObservableObject
         ["StartWithWindows"] = "Windows 起動時に開始",
         ["AutoCheckUpdates"] = "アップデートを自動確認",
         ["NumericIcon"] = "トレイアイコンにバッテリー残量を表示",
+        ["TrayToolTipDisplay"] = "トレイのホバー表示",
+        ["TrayToolTipModeDisabled"] = "ホバー表示を無効にする",
+        ["TrayToolTipModeWindowsNative"] = "Windows ネイティブ表示",
+        ["TrayToolTipModePowerTrayCustom"] = "PowerTray カスタム表示",
+        ["TrayToolTipDescription"] = "Windows ネイティブ表示はシステムトレイによって管理され、外観と表示時間は Windows の設定に従います。PowerTray カスタム表示はアプリのテーマと完全な情報表示に対応します。表示方式の切り替えにはトレイアイコンの再作成が必要なため、PowerTray の再起動後に反映されます。",
+        ["TrayToolTipRestartPending"] = "再起動後に反映",
+        ["TrayToolTipRestartTitle"] = "PowerTray の再起動が必要です",
+        ["TrayToolTipRestartBody"] = "トレイのホバー表示モードは、トレイアイコンを再作成した後に反映されます。PowerTray を今すぐ再起動しますか？",
+        ["TrayToolTipRestartDetail"] = "ネイティブ表示は Windows Shell が管理し、カスタム表示は WPF Popup が管理します。再起動すると、以前のトレイ登録、Popup、イベント購読を完全に解除でき、表示の重複や画面左上への残留を防げます。",
+        ["RestartNow"] = "今すぐ再起動",
+        ["RestartLater"] = "後で再起動",
+        ["RestartFailedTitle"] = "PowerTray の再起動に失敗しました",
+        ["RestartFailedBody"] = "新しい PowerTray プロセスを起動できませんでした。現在の PowerTray はそのまま実行され、保存した表示モードは次回の通常起動時に反映されます。",
         ["FollowGlobalNumericIcon"] = "全体のトレイ表示設定を使用",
         ["ConfirmForgetDeviceTitle"] = "このデバイスを忘れますか？",
-        ["ConfirmForgetDeviceBody"] = "{0} の保存済み設定と履歴を削除します。この操作は元に戻せません。",
+        ["ConfirmForgetDeviceBody"] = "{0} の保存済み設定と履歴を削除します。続行しますか？",
         ["GlobalDefaults"] = "既定の通知設定",
         ["DefaultThreshold"] = "低バッテリー通知の既定しきい値",
         ["WindowsNotification"] = "Windows 通知",
@@ -325,7 +415,7 @@ public sealed class LocalizationService : ObservableObject
         ["QuietEnd"] = "終了",
         ["SuppressFullscreen"] = "全画面アプリの使用中は Windows 通知を一時停止",
         ["DeviceAlerts"] = "デバイス通知",
-        ["Alias"] = "表示名",
+        ["Alias"] = "カスタムデバイス名",
         ["AliasHint"] = "空欄のままにするとデバイス本来の名前を使います。",
         ["OriginalName"] = "元の名前",
         ["Offline"] = "オフライン",
@@ -344,12 +434,17 @@ public sealed class LocalizationService : ObservableObject
         ["LastUpdate"] = "最終更新",
         ["Battery"] = "バッテリー",
         ["BatteryUnknown"] = "バッテリー不明",
+        ["BatteryStatusCharging"] = "充電中",
+        ["BatteryStatusFull"] = "満充電",
+        ["BatteryStatusNotCharging"] = "充電していません",
+        ["BatteryStatusDischarging"] = "放電中",
+        ["BatteryStatusUnknown"] = "状態不明",
         ["NoDevices"] = "対応する Logitech デバイスはまだ見つかっていません。",
         ["Diagnostics"] = "診断",
         ["ExportDiagnostics"] = "診断をエクスポート",
         ["RefreshDiagnostics"] = "更新",
         ["GHubStatus"] = "G Hub の実行状態",
-        ["Port9010Status"] = "G Hub ローカルサービス",
+        ["Port9010Status"] = "G Hub ローカルサービスに接続可能",
         ["CurrentLanguage"] = "現在の言語",
         ["AlertSummary"] = "通知設定の概要",
         ["Yes"] = "はい",
@@ -377,6 +472,7 @@ public sealed class LocalizationService : ObservableObject
         ["HttpRemoteEnabledTitle"] = "リモート HTTP アクセスが有効です",
         ["HttpRemoteEnabledBody"] = "PowerTray のデバイス API はこの PC 以外からも接続できます。アクセストークンを保護し、ファイアウォールでポートを制限してください。",
         ["NoInstallerAsset"] = "最新リリースに PowerTray インストーラーが含まれていません。",
+        ["UpdateSignatureInvalid"] = "リリースのチェックサム署名が無効です。",
         ["UpdateChecksumInvalid"] = "リリースのチェックサムに一致するインストーラー名がありません。",
         ["UpdateChecksumMismatch"] = "ダウンロードしたインストーラーがリリースのチェックサムと一致しません。",
         ["DownloadUpdate"] = "ダウンロード",

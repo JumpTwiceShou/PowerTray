@@ -11,7 +11,7 @@
 #endif
 
 #ifndef AppVersion
-  #define AppVersion "1.4.3"
+  #define AppVersion "1.5.0"
 #endif
 
 #ifndef IncludeRuntime
@@ -368,9 +368,11 @@ begin
   ForceDirectories(SettingsDir);
   Json :=
     '{' + #13#10 +
-    '  "SchemaVersion": 1,' + #13#10 +
+    '  "SchemaVersion": 2,' + #13#10 +
     '  "Language": "' + SelectedLanguageCode() + '",' + #13#10 +
     '  "ThemeMode": "system",' + #13#10 +
+    '  "UiScaleMode": "standard",' + #13#10 +
+    '  "TrayToolTipMode": "PowerTrayCustom",' + #13#10 +
     '  "NumericDisplay": false,' + #13#10 +
     '  "AutoStart": ' + BoolJson(WizardIsTaskSelected('autostart')) + ',' + #13#10 +
     '  "AutoCheckUpdates": ' + BoolJson(WizardIsTaskSelected('checkupdates')) + ',' + #13#10 +

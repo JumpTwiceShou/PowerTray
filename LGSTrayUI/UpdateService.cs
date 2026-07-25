@@ -290,7 +290,7 @@ public sealed class UpdateService : IDisposable
             byte[] signatureBytes = await signatureResponse.Content.ReadAsByteArrayAsync();
             if (!await VerifyChecksumSignatureAsync(checksumBytes, signatureBytes))
             {
-                throw new InvalidDataException(_loc["UpdateChecksumInvalid"]);
+                throw new InvalidDataException(_loc["UpdateSignatureInvalid"]);
             }
 
             string checksumText = Encoding.UTF8.GetString(checksumBytes).TrimStart('\uFEFF');

@@ -63,11 +63,6 @@ namespace LGSTrayCore
             }
         }
 
-        partial void OnLastUpdateChanged(DateTimeOffset value)
-        {
-            Console.WriteLine(ToolTipString);
-        }
-
         public string GetXmlData()
         {
             return

@@ -19,11 +19,14 @@ namespace LGSTrayUI
         };
 
         private readonly PowerTrayUserSettings _settings;
+        private readonly TrayToolTipMode _effectiveTrayToolTipMode;
         private readonly HashSet<string> _pausedUntilNextLaunch = [];
+        private readonly SettingsSaveCoordinator _settingsSaveCoordinator = new();
 
         public UserSettingsWrapper()
         {
             _settings = Load();
+            _effectiveTrayToolTipMode = TrayToolTipModePolicy.Parse(_settings.TrayToolTipMode);
             _settings.AutoStart = ReadAutoStart();
             Save();
         }
@@ -81,6 +84,33 @@ namespace LGSTrayUI
                 OnPropertyChanged();
             }
         }
+
+        public TrayToolTipMode EffectiveTrayToolTipMode => _effectiveTrayToolTipMode;
+
+        public TrayToolTipMode SavedTrayToolTipMode
+        {
+            get => TrayToolTipModePolicy.Parse(_settings.TrayToolTipMode);
+            set
+            {
+                TrayToolTipMode normalized = TrayToolTipModePolicy.Parse(
+                    TrayToolTipModePolicy.Serialize(value)
+                );
+                string serialized = TrayToolTipModePolicy.Serialize(normalized);
+                if (_settings.TrayToolTipMode == serialized)
+                {
+                    return;
+                }
+
+                _settings.TrayToolTipMode = serialized;
+                Save();
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(IsTrayToolTipModeRestartPending));
+                OnPropertyChanged(nameof(Snapshot));
+            }
+        }
+
+        public bool IsTrayToolTipModeRestartPending =>
+            SavedTrayToolTipMode != EffectiveTrayToolTipMode;
 
         public bool NumericDisplay
         {
@@ -549,11 +579,18 @@ namespace LGSTrayUI
             return MigrateLegacySettings();
         }
 
+        internal static PowerTrayUserSettings NormalizeSettingsForTesting(PowerTrayUserSettings settings) =>
+            NormalizeSettings(settings);
+
         private static PowerTrayUserSettings NormalizeSettings(PowerTrayUserSettings settings)
         {
+            settings.SchemaVersion = Math.Max(settings.SchemaVersion, 2);
             settings.Language = NormalizeLanguage(settings.Language);
             settings.ThemeMode = NormalizeThemeMode(settings.ThemeMode);
             settings.UiScaleMode = NormalizeUiScaleMode(settings.UiScaleMode);
+            settings.TrayToolTipMode = TrayToolTipModePolicy.Serialize(
+                TrayToolTipModePolicy.Parse(settings.TrayToolTipMode)
+            );
             settings.SelectedDevices ??= [];
             settings.SelectedDevices = settings.SelectedDevices
                 .Where(x => !string.IsNullOrWhiteSpace(x))
@@ -616,18 +653,10 @@ namespace LGSTrayUI
 
         private void Save()
         {
-            Directory.CreateDirectory(PowerTrayConstants.UserDataDirectory);
-            string tempPath = PowerTrayConstants.SettingsPath + ".tmp";
-            string backupPath = PowerTrayConstants.SettingsPath + ".bak";
-            File.WriteAllText(tempPath, JsonSerializer.Serialize(_settings, JsonOptions));
-
-            if (File.Exists(PowerTrayConstants.SettingsPath))
-            {
-                File.Replace(tempPath, PowerTrayConstants.SettingsPath, backupPath, true);
-                return;
-            }
-
-            File.Move(tempPath, PowerTrayConstants.SettingsPath, true);
+            _settingsSaveCoordinator.Save(
+                () => JsonSerializer.Serialize(_settings, JsonOptions),
+                content => SettingsFileStore.WriteAtomic(PowerTrayConstants.SettingsPath, content)
+            );
         }
 
         private static string NormalizeLanguage(string? language)

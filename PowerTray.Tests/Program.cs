@@ -11,9 +11,11 @@ using MessagePipe;
 using Microsoft.Extensions.DependencyInjection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Data;
 using System.Windows.Media;
 
 static void Assert(bool condition, string message)
@@ -42,6 +44,28 @@ static void TestXmlEscaping()
     Assert(xml.Contains("<device_id>id&amp;1</device_id>"), "Device id should be XML escaped.");
     Assert(xml.Contains("<device_name>Logi &lt;Mouse&gt; &amp; &quot;Test&quot;</device_name>"), "Device name should be XML escaped.");
     Assert(xml.Contains("<battery_percent>86.00</battery_percent>"), "Battery percentage should use invariant decimal formatting.");
+}
+
+static void TestLastUpdateDoesNotWriteDeviceMetadataToConsole()
+{
+    LogiDevice device = new()
+    {
+        DeviceName = "Private device name",
+        BatteryPercentage = 42,
+    };
+    TextWriter originalOutput = Console.Out;
+    using StringWriter capturedOutput = new();
+    try
+    {
+        Console.SetOut(capturedOutput);
+        device.LastUpdate = DateTimeOffset.UtcNow;
+    }
+    finally
+    {
+        Console.SetOut(originalOutput);
+    }
+
+    Assert(capturedOutput.ToString().Length == 0, "Updating a device must not write its name or battery state to standard output.");
 }
 
 static void TestBattery1F20Decode()
@@ -149,15 +173,24 @@ static void TestHttpServerLoopbackFallback()
     Assert(settings.UrlPrefix == "http://localhost:12321", "HTTP server should fall back to loopback unless remote binding is explicit.");
 
     settings.AllowRemote = true;
-    Assert(settings.UrlPrefix == "http://localhost:12321", "HTTP server should remain loopback-only when no remote access token is configured.");
-
     settings.AccessToken = new string('x', 32);
-    Assert(settings.UrlPrefix == "http://+:12321", "HTTP server should allow wildcard binding only with explicit remote mode and a strong token.");
-    Assert(settings.IsAuthorized(new string('x', 32)), "The configured HTTP token should authorize remote requests.");
-    Assert(!settings.IsAuthorized(new string('y', 32)), "An incorrect HTTP token should be rejected.");
+    Assert(settings.UrlPrefix == "http://localhost:12321", "Legacy remote settings must remain loopback-only.");
+    Assert(!settings.IsRemoteAccessConfigured, "PowerTray 1.5.0 must not expose a remote HTTP mode.");
+    Assert(!settings.RequiresAuthentication, "The loopback-only HTTP API does not require remote authentication.");
+    Assert(settings.IsAuthorized(null), "Loopback requests should remain available without a token.");
 
     settings.Addr = "2001:db8::1";
-    Assert(settings.UrlPrefix == "http://[2001:db8::1]:12321", "Explicit remote IPv6 addresses should be bracketed in URL prefixes.");
+    Assert(settings.UrlPrefix == "http://localhost:12321", "Non-loopback IPv6 settings must fall back to localhost.");
+
+    settings.Addr = "::1";
+    Assert(settings.UrlPrefix == "http://[::1]:12321", "Explicit IPv6 loopback should remain supported.");
+}
+
+static void TestHidHotplugRegistrationPolicy()
+{
+    Assert(HidHotplugRegistrationPolicy.IsAvailable(0, 1), "A successful hotplug registration with a valid handle should be available.");
+    Assert(!HidHotplugRegistrationPolicy.IsAvailable(1, 1), "A failed hotplug registration must activate the rediscovery fallback.");
+    Assert(!HidHotplugRegistrationPolicy.IsAvailable(0, 0), "A missing callback handle must activate the rediscovery fallback.");
 }
 
 static void TestTrayToolTipSeparators()
@@ -170,6 +203,207 @@ static void TestTrayToolTipSeparators()
     Version hardcodetVersion = typeof(TaskbarIcon).Assembly.GetName().Version
         ?? throw new InvalidOperationException("Hardcodet assembly version should be available.");
     Assert(hardcodetVersion >= new Version(2, 0, 0, 0), "The themed tray tooltip candidate requires Hardcodet 2.x.");
+}
+
+static void TestTrayToolTipModesAndSettingsMigration()
+{
+    Assert(TrayToolTipModePolicy.Parse(null) == TrayToolTipMode.PowerTrayCustom, "A missing tooltip mode must preserve the existing custom-tooltip behavior.");
+    Assert(TrayToolTipModePolicy.Parse("invalid") == TrayToolTipMode.PowerTrayCustom, "An invalid tooltip mode must safely fall back to PowerTrayCustom.");
+    Assert(TrayToolTipModePolicy.Serialize((TrayToolTipMode)999) == nameof(TrayToolTipMode.PowerTrayCustom), "An undefined tooltip mode must serialize to the safe default.");
+
+    PowerTrayUserSettings missingField = JsonSerializer.Deserialize<PowerTrayUserSettings>("{}")
+        ?? throw new InvalidOperationException("Missing-field settings fixture should deserialize.");
+    UserSettingsWrapper.NormalizeSettingsForTesting(missingField);
+    Assert(missingField.SchemaVersion == 2, "Old settings should migrate to schema version 2.");
+    Assert(missingField.TrayToolTipMode == nameof(TrayToolTipMode.PowerTrayCustom), "Old settings without a tooltip field should retain custom hover.");
+
+    PowerTrayUserSettings invalid = new() { SchemaVersion = 1, TrayToolTipMode = "not-a-mode" };
+    UserSettingsWrapper.NormalizeSettingsForTesting(invalid);
+    Assert(invalid.TrayToolTipMode == nameof(TrayToolTipMode.PowerTrayCustom), "Invalid persisted tooltip values should normalize to PowerTrayCustom.");
+
+    foreach (TrayToolTipMode mode in Enum.GetValues<TrayToolTipMode>())
+    {
+        PowerTrayUserSettings legal = new() { TrayToolTipMode = TrayToolTipModePolicy.Serialize(mode) };
+        UserSettingsWrapper.NormalizeSettingsForTesting(legal);
+        Assert(TrayToolTipModePolicy.Parse(legal.TrayToolTipMode) == mode, $"The legal tooltip mode {mode} should round-trip through settings normalization.");
+
+        TrayToolTipRegistration registration = TrayToolTipRegistration.For(mode);
+        int implementations = (registration.UsesNativeText ? 1 : 0) + (registration.UsesCustomContent ? 1 : 0);
+        Assert(implementations == (mode == TrayToolTipMode.Disabled ? 0 : 1), $"Tooltip mode {mode} must activate exactly one hover implementation.");
+        Assert(registration.SubscribesCustomOpenEvent == registration.UsesCustomContent, "Only the custom WPF tooltip may subscribe to the custom-open event.");
+    }
+
+    TrayToolTipModeChangeDecision newPending = TrayToolTipModeChangePolicy.Evaluate(
+        TrayToolTipMode.PowerTrayCustom,
+        TrayToolTipMode.PowerTrayCustom,
+        TrayToolTipMode.WindowsNative
+    );
+    Assert(newPending is { ShouldSave: true, ShouldPromptForRestart: true }, "A real user change away from the effective mode should save and prompt once.");
+
+    TrayToolTipModeChangeDecision repeatedPending = TrayToolTipModeChangePolicy.Evaluate(
+        TrayToolTipMode.PowerTrayCustom,
+        TrayToolTipMode.WindowsNative,
+        TrayToolTipMode.WindowsNative
+    );
+    Assert(repeatedPending is { ShouldSave: false, ShouldPromptForRestart: false }, "Selecting the same pending value must not prompt repeatedly.");
+
+    TrayToolTipModeChangeDecision cancelPending = TrayToolTipModeChangePolicy.Evaluate(
+        TrayToolTipMode.PowerTrayCustom,
+        TrayToolTipMode.WindowsNative,
+        TrayToolTipMode.PowerTrayCustom
+    );
+    Assert(cancelPending is { ShouldSave: true, ShouldPromptForRestart: false }, "Re-selecting the effective mode should clear pending restart state without another prompt.");
+}
+
+static void TestNativeTrayToolTipLength()
+{
+    Assert(NativeTrayToolTipText.Limit(new string('a', 127)).Length == 127, "Native tooltip text at the Windows limit should remain unchanged.");
+    Assert(NativeTrayToolTipText.Limit(new string('a', 128)).Length == 127, "Native tooltip text must reserve one UTF-16 code unit for the null terminator.");
+    Assert(NativeTrayToolTipText.Limit(new string('测', 200)).Length == 127, "CJK native tooltip text should be limited by UTF-16 code units.");
+
+    string surrogateBoundary = new string('a', 126) + "😀" + "z";
+    string truncated = NativeTrayToolTipText.Limit(surrogateBoundary);
+    Assert(truncated.Length == 126, "Native tooltip truncation must back up before a split surrogate pair.");
+    Assert(!truncated.Any(char.IsSurrogate), "Native tooltip truncation must not leave an unpaired surrogate.");
+
+    string longCustomText = new string('x', 512);
+    TrayToolTipRegistration custom = TrayToolTipRegistration.For(TrayToolTipMode.PowerTrayCustom);
+    Assert(custom.UsesCustomContent && !custom.UsesNativeText && longCustomText.Length == 512, "Custom tooltip mode must not apply the native 127-code-unit limit.");
+}
+
+static void TestLocalizationCatalogs()
+{
+    IReadOnlyDictionary<string, string> zh = LocalizationService.GetCatalogForTesting("zh-CN");
+    IReadOnlyDictionary<string, string> en = LocalizationService.GetCatalogForTesting("en-US");
+    IReadOnlyDictionary<string, string> ja = LocalizationService.GetCatalogForTesting("ja-JP");
+
+    string[] zhKeys = zh.Keys.Order(StringComparer.Ordinal).ToArray();
+    Assert(zhKeys.SequenceEqual(en.Keys.Order(StringComparer.Ordinal)), "English localization keys must exactly match the Chinese semantic source.");
+    Assert(zhKeys.SequenceEqual(ja.Keys.Order(StringComparer.Ordinal)), "Japanese localization keys must exactly match the Chinese semantic source.");
+
+    foreach (string key in zhKeys)
+    {
+        Assert(!string.IsNullOrWhiteSpace(zh[key]) && !string.IsNullOrWhiteSpace(en[key]) && !string.IsNullOrWhiteSpace(ja[key]), $"Localization key {key} must be non-empty in all languages.");
+        string ChinesePlaceholders = string.Join("|", Regex.Matches(zh[key], @"\{\d+(?:[^{}]*)\}").Select(match => match.Value));
+        string EnglishPlaceholders = string.Join("|", Regex.Matches(en[key], @"\{\d+(?:[^{}]*)\}").Select(match => match.Value));
+        string JapanesePlaceholders = string.Join("|", Regex.Matches(ja[key], @"\{\d+(?:[^{}]*)\}").Select(match => match.Value));
+        Assert(ChinesePlaceholders == EnglishPlaceholders, $"English placeholders for {key} must match Chinese in order and format.");
+        Assert(ChinesePlaceholders == JapanesePlaceholders, $"Japanese placeholders for {key} must match Chinese in order and format.");
+    }
+
+    Assert(ja["Alias"] == "カスタムデバイス名", "Japanese Alias must preserve the Chinese meaning of a custom device name.");
+    Assert(ja["Port9010Status"].Contains("接続可能", StringComparison.Ordinal), "Japanese G Hub status must preserve the Chinese reachable-state meaning.");
+    Assert(ja["ConfirmForgetDeviceBody"].EndsWith("続行しますか？", StringComparison.Ordinal), "Japanese device-removal text must preserve the Chinese confirmation question.");
+
+    string tempDirectory = Path.Combine(Path.GetTempPath(), $"PowerTray-bootstrap-loc-{Guid.NewGuid():N}");
+    try
+    {
+        PowerTrayConstants.UserDataDirectoryOverrideForTests = tempDirectory;
+        Directory.CreateDirectory(tempDirectory);
+        File.WriteAllText(PowerTrayConstants.SettingsPath, "{\"Language\":\"ja-JP\"}");
+        Assert(LocalizationService.TranslateBootstrap("SettingsLoadErrorTitle") == ja["SettingsLoadErrorTitle"], "Startup settings errors should use the persisted language before dependency injection is available.");
+        File.WriteAllText(PowerTrayConstants.SettingsPath, "{not-json");
+        Assert(!string.IsNullOrWhiteSpace(LocalizationService.TranslateBootstrap("SettingsLoadErrorTitle")), "Malformed user settings must not prevent bootstrap error localization.");
+    }
+    finally
+    {
+        PowerTrayConstants.UserDataDirectoryOverrideForTests = null;
+        if (Directory.Exists(tempDirectory))
+        {
+            Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+}
+
+static async Task TestBatteryPollingLoopRecoversAfterUnexpectedFailureAsync()
+{
+    using CancellationTokenSource cancellation = new();
+    int updateAttempts = 0;
+    int recordedErrors = 0;
+
+    await BatteryPollingLoop.RunAsync(
+        _ => Task.CompletedTask,
+        _ =>
+        {
+            updateAttempts++;
+            if (updateAttempts == 1)
+            {
+                throw new InvalidDataException("transient parser failure");
+            }
+
+            cancellation.Cancel();
+            return Task.CompletedTask;
+        },
+        TimeSpan.Zero,
+        exception =>
+        {
+            Assert(exception is InvalidDataException, "The battery poll loop should report the original unexpected exception.");
+            recordedErrors++;
+        },
+        cancellation.Token
+    );
+
+    Assert(updateAttempts == 2, "A single unexpected battery polling failure must not terminate all future polling for the device.");
+    Assert(recordedErrors == 1, "The unexpected battery polling failure should be recorded exactly once.");
+}
+
+static void TestMessagePipeDiagnosticsPolicy()
+{
+#if DEBUG
+    Assert(MessagePipeDiagnosticsPolicy.CaptureStackTrace, "Debug builds should retain MessagePipe subscription stack traces for diagnostics.");
+#else
+    Assert(!MessagePipeDiagnosticsPolicy.CaptureStackTrace, "Release builds must disable MessagePipe subscription stack traces to avoid production overhead.");
+#endif
+}
+
+static void TestRestartWaitArgumentParsing()
+{
+    Assert(RestartWaitArguments.TryExtract(["--settings"], out RestartWaitTarget? noTarget, out string[] ordinaryArgs), "Ordinary startup arguments should parse.");
+    Assert(noTarget == null && ordinaryArgs.SequenceEqual(["--settings"]), "Ordinary startup arguments should remain unchanged.");
+
+    string[] restartArgs =
+    [
+        RestartWaitArguments.WaitForExitArgument,
+        "123",
+        RestartWaitArguments.WaitStartTimeArgument,
+        "456",
+        "--settings",
+    ];
+    Assert(RestartWaitArguments.TryExtract(restartArgs, out RestartWaitTarget? target, out string[] remaining), "A complete internal restart argument pair should parse.");
+    Assert(target == new RestartWaitTarget(123, 456) && remaining.SequenceEqual(["--settings"]), "Internal wait arguments should be removed before normal startup processing.");
+    Assert(!RestartWaitArguments.TryExtract([RestartWaitArguments.WaitForExitArgument, "123"], out _, out _), "A partial internal restart argument set must be rejected.");
+    Assert(!RestartWaitArguments.TryExtract([RestartWaitArguments.WaitForExitArgument, "-1", RestartWaitArguments.WaitStartTimeArgument, "1"], out _, out _), "Invalid restart PIDs must be rejected.");
+
+    using System.Diagnostics.Process current = System.Diagnostics.Process.GetCurrentProcess();
+    string executablePath = Environment.ProcessPath
+        ?? throw new InvalidOperationException("The test executable path should be available.");
+    System.Diagnostics.ProcessStartInfo startInfo = RestartWaitArguments.CreateStartInfo(executablePath, current, reopenSettings: true);
+    Assert(!startInfo.UseShellExecute, "Safe restart must use UseShellExecute=false.");
+    Assert(Path.IsPathFullyQualified(startInfo.FileName), "Safe restart must use the absolute current executable path.");
+    Assert(startInfo.ArgumentList.Contains(RestartWaitArguments.WaitForExitArgument) &&
+           startInfo.ArgumentList.Contains(RestartWaitArguments.WaitStartTimeArgument) &&
+           startInfo.ArgumentList.Contains("--settings"), "Safe restart must pass the PID, process start time, and settings reopen flag as separate arguments.");
+}
+
+static void TestRestartWaitProcessHandle()
+{
+    string executablePath = Environment.ProcessPath
+        ?? throw new InvalidOperationException("The test executable path should be available.");
+    System.Diagnostics.ProcessStartInfo startInfo = new(executablePath)
+    {
+        UseShellExecute = false,
+        WorkingDirectory = AppContext.BaseDirectory,
+    };
+    startInfo.ArgumentList.Add("--restart-wait-child");
+
+    using System.Diagnostics.Process child = System.Diagnostics.Process.Start(startInfo)
+        ?? throw new InvalidOperationException("The restart wait fixture process should start.");
+    long childStartTime = child.StartTime.ToUniversalTime().Ticks;
+    Assert(RestartWaitArguments.WaitForPriorInstance(new RestartWaitTarget(child.Id, childStartTime + 1), TimeSpan.FromMilliseconds(100)), "A mismatched process start time should be treated as PID reuse, not as the old PowerTray instance.");
+
+    RestartWaitTarget target = new(child.Id, childStartTime);
+    Assert(RestartWaitArguments.WaitForPriorInstance(target, TimeSpan.FromSeconds(5)), "The replacement process should wait on the exact old process handle until it exits.");
+    Assert(child.HasExited, "The wait helper should return only after the target process exits.");
 }
 
 static void TestTrayToolTipDisposalLifecycle()
@@ -213,6 +447,163 @@ static void TestTrayToolTipDisposalLifecycle()
     if (failure != null)
     {
         throw new InvalidOperationException("Tray tooltip disposal lifecycle failed.", failure);
+    }
+}
+
+static void TestProductionTrayToolTipModeLifecycle()
+{
+    string executablePath = Environment.ProcessPath
+        ?? throw new InvalidOperationException("The test executable path should be available.");
+    System.Diagnostics.ProcessStartInfo startInfo = new(executablePath)
+    {
+        UseShellExecute = false,
+        WorkingDirectory = AppContext.BaseDirectory,
+        RedirectStandardOutput = true,
+        RedirectStandardError = true,
+        CreateNoWindow = true,
+    };
+    startInfo.ArgumentList.Add("--tooltip-lifecycle-child");
+
+    using System.Diagnostics.Process process = System.Diagnostics.Process.Start(startInfo)
+        ?? throw new InvalidOperationException("The isolated WPF tooltip lifecycle process should start.");
+    Task<string> standardOutput = process.StandardOutput.ReadToEndAsync();
+    Task<string> standardError = process.StandardError.ReadToEndAsync();
+    if (!process.WaitForExit(30_000))
+    {
+        process.Kill(entireProcessTree: true);
+        throw new InvalidOperationException("The isolated WPF tooltip lifecycle process timed out.");
+    }
+
+    string output = standardOutput.GetAwaiter().GetResult();
+    string error = standardError.GetAwaiter().GetResult();
+    Assert(process.ExitCode == 0, $"The isolated WPF tooltip lifecycle process failed. Output: {output} Error: {error}");
+}
+
+static void TestProductionTrayToolTipModeLifecycleCore()
+{
+    Exception? failure = null;
+    Thread thread = new(() =>
+    {
+        Application? application = null;
+        try
+        {
+            application = new Application
+            {
+                ShutdownMode = ShutdownMode.OnExplicitShutdown,
+            };
+            application.Resources.MergedDictionaries.Add(new ResourceDictionary
+            {
+                Source = new Uri("/PowerTray;component/NotifyIconResources.xaml", UriKind.Relative),
+            });
+            ThemeService.ApplyCurrentResources();
+
+            foreach (TrayToolTipMode mode in Enum.GetValues<TrayToolTipMode>())
+            {
+                string tempDirectory = Path.Combine(Path.GetTempPath(), $"PowerTray-tooltip-mode-{mode}-{Guid.NewGuid():N}");
+                try
+                {
+                    PowerTrayConstants.UserDataDirectoryOverrideForTests = tempDirectory;
+                    Directory.CreateDirectory(tempDirectory);
+                    PowerTrayUserSettings persisted = new()
+                    {
+                        Language = "zh-CN",
+                        TrayToolTipMode = TrayToolTipModePolicy.Serialize(mode),
+                    };
+                    File.WriteAllText(
+                        PowerTrayConstants.SettingsPath,
+                        JsonSerializer.Serialize(persisted)
+                    );
+
+                    UserSettingsWrapper settings = new();
+                    Assert(settings.EffectiveTrayToolTipMode == mode, $"The icon factory should freeze {mode} as the process-effective mode.");
+                    AlertStateService alertState = new();
+                    LogiDeviceIconFactory iconFactory = new(
+                        Microsoft.Extensions.Options.Options.Create(new AppSettings()),
+                        settings,
+                        alertState
+                    );
+                    LocalizationService localization = new(settings);
+                    using LogiDeviceViewModel device = new(iconFactory, settings, localization);
+                    device.UpdateState(new InitMessage($"test-{mode}", $"测试设备 {mode} 😀", true, DeviceType.Mouse));
+                    device.UpdateState(new UpdateMessage(
+                        device.DeviceId,
+                        73,
+                        PowerSupplyStatus.POWER_SUPPLY_STATUS_CHARGING,
+                        4010,
+                        DateTimeOffset.UtcNow
+                    ));
+                    device.IsChecked = true;
+
+                    LogiDeviceIcon firstIcon = device.TaskbarIconForTesting
+                        ?? throw new InvalidOperationException($"Mode {mode} should create a tray icon through the production ViewModel path.");
+                    TaskbarIcon taskbarIcon = firstIcon.TaskbarIconForTesting;
+                    TrayToolTipRegistration registration = firstIcon.ToolTipRegistrationForTesting;
+                    ToolTip? resolvedCustomToolTip = null;
+
+                    switch (mode)
+                    {
+                        case TrayToolTipMode.Disabled:
+                            Assert(taskbarIcon.TrayToolTip == null, "Disabled mode must not register WPF custom tooltip content.");
+                            Assert(string.IsNullOrEmpty(taskbarIcon.ToolTipText), "Disabled mode must not provide native Shell tooltip text.");
+                            Assert(!registration.SubscribesCustomOpenEvent, "Disabled mode must not subscribe to custom tooltip events.");
+                            break;
+                        case TrayToolTipMode.WindowsNative:
+                            BindingOperations.GetBindingExpression(taskbarIcon, TaskbarIcon.ToolTipTextProperty)?.UpdateTarget();
+                            Assert(taskbarIcon.TrayToolTip == null, "WindowsNative mode must not create WPF custom tooltip content.");
+                            Assert(!string.IsNullOrWhiteSpace(taskbarIcon.ToolTipText), "WindowsNative mode must provide Shell tooltip text.");
+                            Assert(taskbarIcon.ToolTipText.Length <= NativeTrayToolTipText.MaximumUtf16CodeUnits, "WindowsNative Shell text must respect the szTip limit.");
+                            Assert(!registration.SubscribesCustomOpenEvent, "WindowsNative mode must not subscribe to custom tooltip events.");
+                            break;
+                        case TrayToolTipMode.PowerTrayCustom:
+                            Assert(taskbarIcon.TrayToolTip != null, "PowerTrayCustom mode must register the themed WPF tooltip content.");
+                            Assert(string.IsNullOrEmpty(taskbarIcon.ToolTipText), "PowerTrayCustom mode must not also register Shell tooltip text.");
+                            Assert(registration.SubscribesCustomOpenEvent, "PowerTrayCustom mode must subscribe only to its custom-open event.");
+                            resolvedCustomToolTip = taskbarIcon.TrayToolTipResolved;
+                            Assert(resolvedCustomToolTip != null, "PowerTrayCustom mode should resolve an actual WPF ToolTip.");
+                            break;
+                    }
+
+                    device.MarkOffline();
+                    Assert(device.TaskbarIconForTesting == null, $"Mode {mode} must remove the tray icon through the production OFFLINE path.");
+                    if (resolvedCustomToolTip != null)
+                    {
+                        Assert(!resolvedCustomToolTip.IsOpen, "Custom tooltip must be closed before icon disposal.");
+                        Assert(resolvedCustomToolTip.Content == null, "Custom tooltip content must be detached during production icon disposal.");
+                        Assert(resolvedCustomToolTip.DataContext == null, "Custom tooltip data context must be detached during production icon disposal.");
+                    }
+
+                    device.MarkPresence();
+                    LogiDeviceIcon recreatedIcon = device.TaskbarIconForTesting
+                        ?? throw new InvalidOperationException($"Mode {mode} should recreate the tray icon when the device returns online.");
+                    Assert(!ReferenceEquals(firstIcon, recreatedIcon), $"Mode {mode} should create a fresh icon after OFFLINE recovery.");
+                }
+                finally
+                {
+                    PowerTrayConstants.UserDataDirectoryOverrideForTests = null;
+                    if (Directory.Exists(tempDirectory))
+                    {
+                        Directory.Delete(tempDirectory, recursive: true);
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            failure = ex;
+        }
+        finally
+        {
+            application?.Shutdown();
+        }
+    });
+    thread.SetApartmentState(ApartmentState.STA);
+    thread.Start();
+    thread.Join(TimeSpan.FromSeconds(30));
+
+    Assert(!thread.IsAlive, "Production tooltip lifecycle test must complete without a dispatcher hang.");
+    if (failure != null)
+    {
+        throw new InvalidOperationException("Production tray tooltip mode lifecycle failed.", failure);
     }
 }
 
@@ -1085,6 +1476,16 @@ static void TestIpcSessionAuthentication()
     malformed.nonce = null!;
     malformed.authTag = null!;
     Assert(!IpcSessionContext.Validate(IPCMessageType.INIT, malformed), "Null IPC envelope fields must be rejected without throwing.");
+
+    InitMessage minimumTimestamp = new("device-3", "Minimum timestamp", true, DeviceType.Mouse);
+    IpcSessionContext.Sign(IPCMessageType.INIT, minimumTimestamp);
+    minimumTimestamp.issuedAtUnixMilliseconds = long.MinValue;
+    Assert(!IpcSessionContext.Validate(IPCMessageType.INIT, minimumTimestamp), "The minimum Int64 timestamp must be rejected without overflowing.");
+
+    InitMessage maximumTimestamp = new("device-4", "Maximum timestamp", true, DeviceType.Mouse);
+    IpcSessionContext.Sign(IPCMessageType.INIT, maximumTimestamp);
+    maximumTimestamp.issuedAtUnixMilliseconds = long.MaxValue;
+    Assert(!IpcSessionContext.Validate(IPCMessageType.INIT, maximumTimestamp), "The maximum Int64 timestamp must be rejected without overflowing.");
 }
 
 static async Task TestUpdaterDetachedSignatureVerificationAsync()
@@ -1263,6 +1664,88 @@ static void TestPersistentReceiverIdentity()
     }
 }
 
+static void TestSettingsFileStore()
+{
+    string tempDirectory = Path.Combine(Path.GetTempPath(), $"PowerTray-settings-test-{Guid.NewGuid():N}");
+    string settingsPath = Path.Combine(tempDirectory, "settings.json");
+    try
+    {
+        SettingsFileStore.WriteAtomic(settingsPath, "{\"generation\":1}");
+        SettingsFileStore.WriteAtomic(settingsPath, "{\"generation\":2}");
+        Assert(File.ReadAllText(settingsPath).Contains("\"generation\":2", StringComparison.Ordinal), "Atomic settings writes should replace the destination.");
+        Assert(File.Exists(settingsPath + ".bak"), "Replacing settings should retain the previous file as a backup.");
+        Assert(File.ReadAllText(settingsPath + ".bak").Contains("\"generation\":1", StringComparison.Ordinal), "The settings backup should contain the previous generation.");
+
+        Parallel.For(0, 32, index =>
+            SettingsFileStore.WriteAtomic(settingsPath, $"{{\"generation\":{index}}}"));
+        using JsonDocument finalSettings = JsonDocument.Parse(File.ReadAllText(settingsPath));
+        Assert(finalSettings.RootElement.TryGetProperty("generation", out _), "Concurrent settings saves must leave a complete JSON document.");
+        Assert(Directory.GetFiles(tempDirectory, "settings.json.*.tmp").Length == 0, "Successful settings saves should not leave temporary files.");
+
+        SettingsSaveCoordinator coordinator = new();
+        int currentGeneration = 1;
+        string? persistedContent = null;
+        using ManualResetEventSlim firstSnapshotCaptured = new(false);
+        using ManualResetEventSlim allowFirstSnapshotToContinue = new(false);
+        Task firstSave = Task.Run(() => coordinator.Save(
+            () =>
+            {
+                int capturedGeneration = Volatile.Read(ref currentGeneration);
+                firstSnapshotCaptured.Set();
+                allowFirstSnapshotToContinue.Wait();
+                return $"{{\"generation\":{capturedGeneration}}}";
+            },
+            content => persistedContent = content
+        ));
+        Assert(firstSnapshotCaptured.Wait(TimeSpan.FromSeconds(5)), "The first coordinated settings snapshot should start.");
+
+        Volatile.Write(ref currentGeneration, 2);
+        Task secondSave = Task.Run(() => coordinator.Save(
+            () => $"{{\"generation\":{Volatile.Read(ref currentGeneration)}}}",
+            content => persistedContent = content
+        ));
+        Assert(
+            SpinWait.SpinUntil(() => coordinator.RequestedRevision >= 2, TimeSpan.FromSeconds(5)),
+            "The newer settings save should register while the older snapshot is delayed."
+        );
+        allowFirstSnapshotToContinue.Set();
+        Task.WaitAll(firstSave, secondSave);
+        Assert(
+            persistedContent?.Contains("\"generation\":2", StringComparison.Ordinal) == true,
+            "A delayed older snapshot must not overwrite a newer settings generation."
+        );
+    }
+    finally
+    {
+        if (Directory.Exists(tempDirectory))
+        {
+            Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+}
+
+static void TestCrashLogWriter()
+{
+    string tempDirectory = Path.Combine(Path.GetTempPath(), $"PowerTray-crashlog-test-{Guid.NewGuid():N}");
+    try
+    {
+        InvalidOperationException exception = new("crash fixture");
+        Assert(CrashLogWriter.TryWrite(exception, tempDirectory, new DateTimeOffset(2026, 7, 25, 12, 34, 56, TimeSpan.Zero)), "Crash logging should succeed in a writable user-data directory.");
+
+        string[] logs = Directory.GetFiles(tempDirectory, "crashlog_*.log");
+        Assert(logs.Length == 1, "Crash logging should create exactly one uniquely named log file.");
+        Assert(File.ReadAllText(logs[0]).Contains("crash fixture", StringComparison.Ordinal), "Crash logging should preserve the original exception details.");
+        Assert(!CrashLogWriter.TryWrite(exception, "\0"), "Crash logging should fail safely for an invalid path.");
+    }
+    finally
+    {
+        if (Directory.Exists(tempDirectory))
+        {
+            Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+}
+
 static void AssertThrows<TException>(Action action, string message) where TException : Exception
 {
     try
@@ -1277,15 +1760,46 @@ static void AssertThrows<TException>(Action action, string message) where TExcep
     throw new InvalidOperationException(message);
 }
 
+if (args.Contains("--tooltip-lifecycle-child", StringComparer.Ordinal))
+{
+    try
+    {
+        TestProductionTrayToolTipModeLifecycleCore();
+        Console.WriteLine("Isolated production tooltip lifecycle passed.");
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine(ex);
+        Environment.ExitCode = 1;
+    }
+    return;
+}
+
+if (args.Contains("--restart-wait-child", StringComparer.Ordinal))
+{
+    Thread.Sleep(400);
+    return;
+}
+
 TestXmlEscaping();
+TestLastUpdateDoesNotWriteDeviceMetadataToConsole();
 TestBattery1F20Decode();
 TestBattery1001LookupBoundaries();
 TestHidDeviceInfoX64AbiLayout();
 TestNativeIdentityDiagnosticsRedaction();
 TestUpdaterAssetSelectionAndChecksum();
 TestHttpServerLoopbackFallback();
+TestHidHotplugRegistrationPolicy();
 TestTrayToolTipSeparators();
+TestTrayToolTipModesAndSettingsMigration();
+TestNativeTrayToolTipLength();
+TestLocalizationCatalogs();
+await TestBatteryPollingLoopRecoversAfterUnexpectedFailureAsync();
+TestMessagePipeDiagnosticsPolicy();
+TestRestartWaitArgumentParsing();
+TestRestartWaitProcessHandle();
 TestTrayToolTipDisposalLifecycle();
+TestProductionTrayToolTipModeLifecycle();
 TestLowBatteryAlertIcons();
 TestTrayMenuPaletteUsesApplicationThemeColors();
 TestTrayMenuDictionaryDoesNotShadowApplicationPalette();
@@ -1315,5 +1829,7 @@ TestUpdaterTrustedHosts();
 TestEndpointReceiverIdentityValidation();
 TestHidDeviceIndexCache();
 TestPersistentReceiverIdentity();
+TestSettingsFileStore();
+TestCrashLogWriter();
 
 Console.WriteLine("PowerTray.Tests passed.");

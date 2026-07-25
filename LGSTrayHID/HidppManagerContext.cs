@@ -157,7 +157,7 @@ public sealed class HidppManagerContext
         {
             fixed (int* hotplugHandle = &_hotplugHandle)
             {
-                _ = HidHotplugRegisterCallback(
+                int returnCode = HidHotplugRegisterCallback(
                     LOGITECH_VENDOR_ID,
                     0x00,
                     HidApiHotPlugEvent.HID_API_HOTPLUG_EVENT_DEVICE_ARRIVED | HidApiHotPlugEvent.HID_API_HOTPLUG_EVENT_DEVICE_LEFT,
@@ -166,6 +166,18 @@ public sealed class HidppManagerContext
                     IntPtr.Zero,
                     hotplugHandle
                 );
+
+                if (HidHotplugRegistrationPolicy.IsAvailable(returnCode, _hotplugHandle))
+                {
+                    NativeDiagnosticsStore.AddEvent("HID hotplug callback registered");
+                }
+                else
+                {
+                    _hotplugHandle = 0;
+                    NativeDiagnosticsStore.RecordError(
+                        $"HID hotplug callback registration failed (code={returnCode}); startup and periodic rediscovery remain active"
+                    );
+                }
             }
         }
 
@@ -179,7 +191,13 @@ public sealed class HidppManagerContext
     {
         if (_hotplugHandle != 0)
         {
-            HidHotplugDeregisterCallback(_hotplugHandle);
+            int returnCode = HidHotplugDeregisterCallback(_hotplugHandle);
+            if (returnCode != 0)
+            {
+                NativeDiagnosticsStore.RecordError(
+                    $"HID hotplug callback deregistration failed (code={returnCode})"
+                );
+            }
             _hotplugHandle = 0;
         }
 

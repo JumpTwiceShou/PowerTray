@@ -2,7 +2,6 @@
 using LGSTrayCore.Managers;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Options;
 using System.Windows;
 using System;
 using LGSTrayPrimitives.IPC;
@@ -36,7 +35,16 @@ public partial class App : Application
 
     protected override async void OnStartup(StartupEventArgs e)
     {
-        if (!TryAcquireSingleInstance(e.Args))
+        if (!RestartWaitArguments.TryExtract(e.Args, out RestartWaitTarget? restartTarget, out string[] effectiveArgs) ||
+            !RestartWaitArguments.WaitForPriorInstance(restartTarget, TimeSpan.FromSeconds(60)))
+        {
+            Shutdown();
+            return;
+        }
+
+        // A restart child must finish waiting for the exact old process before it
+        // creates the single-instance mutex, tray icons, named pipes, or HID helper.
+        if (!TryAcquireSingleInstance(effectiveArgs))
         {
             Shutdown();
             return;
@@ -62,6 +70,7 @@ public partial class App : Application
         builder.Services.AddSingleton<ThemeService>();
         builder.Services.AddSingleton<LocalizationService>();
         builder.Services.AddSingleton<UpdateService>();
+        builder.Services.AddSingleton<ApplicationRestartService>();
         builder.Services.AddSingleton<NativeDiagnosticsClient>();
         builder.Services.AddSingleton<NativeBackendStatus>();
         builder.Services.AddSingleton<AlertStateService>();
@@ -92,16 +101,7 @@ public partial class App : Application
         applicationLifetime.ApplicationStopping.Register(() => Interlocked.Exchange(ref _applicationStopping, 1));
         RegisterShutdownSignal(applicationLifetime);
 
-        AppSettings runtimeSettings = host.Services.GetRequiredService<IOptions<AppSettings>>().Value;
-        if (runtimeSettings.HTTPServer.Enabled && runtimeSettings.HTTPServer.RequiresAuthentication)
-        {
-            LocalizationService localization = host.Services.GetRequiredService<LocalizationService>();
-            host.Services.GetRequiredService<NotificationService>().Show(
-                localization["HttpRemoteEnabledTitle"],
-                localization["HttpRemoteEnabledBody"]
-            );
-        }
-        if (e.Args.Any(x => x.Equals("--settings", StringComparison.OrdinalIgnoreCase)))
+        if (effectiveArgs.Any(x => x.Equals("--settings", StringComparison.OrdinalIgnoreCase)))
         {
             host.Services.GetRequiredService<SettingsWindowFactory>().Show();
         }
@@ -218,8 +218,8 @@ public partial class App : Application
             if (ex is FileNotFoundException || ex is InvalidDataException)
             {
                 var msgBoxRet = ThemedMessageBox.Show(
-                    "Could not read appsettings.toml. Reset it to defaults?",
-                    "PowerTray - Settings Error",
+                    LocalizationService.TranslateBootstrap("SettingsLoadErrorBody"),
+                    LocalizationService.TranslateBootstrap("SettingsLoadErrorTitle"),
                     MessageBoxButton.YesNo, MessageBoxResult.No
                 );
 
@@ -242,10 +242,9 @@ public partial class App : Application
 
     private void CrashHandler(object sender, UnhandledExceptionEventArgs args)
     {
-        Exception e = (Exception)args.ExceptionObject;
-        long unixTime = DateTimeOffset.Now.ToUnixTimeSeconds();
-
-        using StreamWriter writer = new($"./crashlog_{unixTime}.log", false);
-        writer.WriteLine(e.ToString());
+        if (args.ExceptionObject is Exception exception)
+        {
+            _ = CrashLogWriter.TryWrite(exception);
+        }
     }
 }

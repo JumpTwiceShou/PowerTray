@@ -152,6 +152,25 @@ public sealed class ThemedMessageBox : Window
         return dialog._optionResult;
     }
 
+    public static string ShowOptions(
+        Window owner,
+        string message,
+        string title,
+        IReadOnlyList<ThemedDialogOption> options,
+        string? detail = null
+    )
+    {
+        ArgumentNullException.ThrowIfNull(owner);
+        ThemeService.ApplyCurrentResources();
+        ThemedMessageBox dialog = new(message, title, options, detail)
+        {
+            Owner = owner,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+        };
+        _ = dialog.ShowDialog();
+        return dialog._optionResult;
+    }
+
     private static double GetDialogWidth()
     {
         double desired = 460.0 * ThemeService.CurrentScale;

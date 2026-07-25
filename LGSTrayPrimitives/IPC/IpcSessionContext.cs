@@ -149,7 +149,10 @@ public static class IpcSessionContext
         }
 
         long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (Math.Abs(now - issuedAtUnixMilliseconds) > MaximumClockSkewMilliseconds)
+        long minimumAcceptedTimestamp = now - MaximumClockSkewMilliseconds;
+        long maximumAcceptedTimestamp = now + MaximumClockSkewMilliseconds;
+        if (issuedAtUnixMilliseconds < minimumAcceptedTimestamp ||
+            issuedAtUnixMilliseconds > maximumAcceptedTimestamp)
         {
             return false;
         }

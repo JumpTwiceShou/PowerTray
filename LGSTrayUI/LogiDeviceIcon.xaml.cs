@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
 using System.Windows.Media;
 using System.Windows.Threading;
 
@@ -17,17 +18,25 @@ namespace LGSTrayUI
         private readonly AppSettings _appSettings;
         private readonly UserSettingsWrapper _userSettings;
         private readonly AlertStateService _alertState;
+        private readonly TrayToolTipMode _effectiveTrayToolTipMode;
 
         public LogiDeviceIconFactory(IOptions<AppSettings> appSettings, UserSettingsWrapper userSettings, AlertStateService alertState)
         {
             _appSettings = appSettings.Value;
             _userSettings = userSettings;
             _alertState = alertState;
+            _effectiveTrayToolTipMode = userSettings.EffectiveTrayToolTipMode;
         }
 
         public LogiDeviceIcon CreateDeviceIcon(LogiDevice device, Action<LogiDeviceIcon>? config = null)
         {
-            LogiDeviceIcon output = new(device, _appSettings, _userSettings, _alertState);
+            LogiDeviceIcon output = new(
+                device,
+                _appSettings,
+                _userSettings,
+                _alertState,
+                _effectiveTrayToolTipMode
+            );
             config?.Invoke(output);
 
             return output;
@@ -54,9 +63,21 @@ namespace LGSTrayUI
                     _userSettings.PropertyChanged -= NotifyIconViewModelPropertyChanged;
                     _userSettings.DeviceSettingsChanged -= UserSettingsDeviceSettingsChanged;
                     CheckTheme.StaticPropertyChanged -= CheckThemePropertyChanged;
-                    taskbarIcon.PreviewTrayToolTipOpen -= OnPreviewTrayToolTipOpen;
+                    if (_toolTipRegistration.SubscribesCustomOpenEvent)
+                    {
+                        taskbarIcon.PreviewTrayToolTipOpen -= OnPreviewTrayToolTipOpen;
+                    }
                     TrayContextMenuPlacement.Detach(taskbarIcon);
-                    TrayToolTipLifecycle.CloseBeforeIconDisposal(taskbarIcon);
+                    BindingOperations.ClearBinding(taskbarIcon, TaskbarIcon.ToolTipTextProperty);
+                    taskbarIcon.ToolTipText = string.Empty;
+                    if (_toolTipRegistration.UsesCustomContent)
+                    {
+                        TrayToolTipLifecycle.CloseBeforeIconDisposal(taskbarIcon);
+                    }
+                    else
+                    {
+                        taskbarIcon.TrayToolTip = null;
+                    }
                     taskbarIcon.Dispose();
                 }
             }
@@ -71,7 +92,6 @@ namespace LGSTrayUI
 
         public void Dispose()
         {
-            // Do not change this code. Put cleanup code in 'Dispose(bool disposing)' method
             Dispose(disposing: true);
             GC.SuppressFinalize(this);
         }
@@ -102,8 +122,18 @@ namespace LGSTrayUI
         private readonly UserSettingsWrapper _userSettings;
         private readonly DispatcherTimer _blinkTimer;
         private bool _blinkVisible = true;
+        private TrayToolTipRegistration _toolTipRegistration;
 
-        public LogiDeviceIcon(LogiDevice device, AppSettings appSettings, UserSettingsWrapper userSettings, AlertStateService alertState)
+        internal TaskbarIcon TaskbarIconForTesting => taskbarIcon;
+        internal TrayToolTipRegistration ToolTipRegistrationForTesting => _toolTipRegistration;
+
+        public LogiDeviceIcon(
+            LogiDevice device,
+            AppSettings appSettings,
+            UserSettingsWrapper userSettings,
+            AlertStateService alertState,
+            TrayToolTipMode effectiveTrayToolTipMode
+        )
         {
             InitializeComponent();
 
@@ -114,6 +144,7 @@ namespace LGSTrayUI
 
             DataContext = device;
             taskbarIcon.DataContext = device;
+            ConfigureTrayToolTip(effectiveTrayToolTipMode);
             _alertState = alertState;
             _alertState.Changed += OnAlertStateChanged;
 
@@ -127,7 +158,6 @@ namespace LGSTrayUI
                 Interval = TimeSpan.FromMilliseconds(500),
             };
             TrayContextMenuPlacement.Attach(taskbarIcon);
-            taskbarIcon.PreviewTrayToolTipOpen += OnPreviewTrayToolTipOpen;
             _blinkTimer.Tick += (_, _) =>
             {
                 _blinkVisible = !_blinkVisible;
@@ -135,6 +165,37 @@ namespace LGSTrayUI
             };
             OnAlertStateChanged();
             DrawBatteryIcon();
+        }
+
+        private void ConfigureTrayToolTip(TrayToolTipMode mode)
+        {
+            _toolTipRegistration = TrayToolTipRegistration.For(mode);
+            taskbarIcon.TrayToolTip = null;
+            taskbarIcon.ToolTipText = string.Empty;
+
+            if (_toolTipRegistration.UsesNativeText)
+            {
+                BindingOperations.SetBinding(
+                    taskbarIcon,
+                    TaskbarIcon.ToolTipTextProperty,
+                    new Binding(nameof(LogiDeviceViewModel.NativeToolTipString))
+                    {
+                        Mode = BindingMode.OneWay,
+                    }
+                );
+                return;
+            }
+
+            if (_toolTipRegistration.UsesCustomContent)
+            {
+                if (Resources["PowerTrayCustomTrayToolTipContent"] is not UIElement customContent)
+                {
+                    throw new InvalidOperationException("The PowerTray custom tray tooltip resource is missing or invalid.");
+                }
+
+                taskbarIcon.TrayToolTip = customContent;
+                taskbarIcon.PreviewTrayToolTipOpen += OnPreviewTrayToolTipOpen;
+            }
         }
 
         private void OnPreviewTrayToolTipOpen(object sender, RoutedEventArgs e)

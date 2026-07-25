@@ -35,6 +35,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     private readonly AlertManager _alertManager;
     private readonly SystemStateService _systemState;
     private readonly UpdateService _updateService;
+    private readonly ApplicationRestartService _applicationRestartService;
     private readonly NativeDiagnosticsClient _nativeDiagnosticsClient;
     private readonly NativeBackendStatus _nativeBackendStatus;
     private readonly HttpServerStatus _httpServerStatus;
@@ -52,6 +53,13 @@ public sealed partial class SettingsViewModel : ObservableObject
         new("en-US", "English"),
         new("zh-CN", "简体中文"),
         new("ja-JP", "日本語"),
+    ];
+
+    public IReadOnlyList<TrayToolTipModeOption> TrayToolTipModeOptions =>
+    [
+        new(TrayToolTipMode.Disabled, Loc["TrayToolTipModeDisabled"]),
+        new(TrayToolTipMode.WindowsNative, Loc["TrayToolTipModeWindowsNative"]),
+        new(TrayToolTipMode.PowerTrayCustom, Loc["TrayToolTipModePowerTrayCustom"]),
     ];
 
     public IReadOnlyList<UiScaleOption> UiScaleOptions { get; } =
@@ -81,6 +89,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         AlertManager alertManager,
         SystemStateService systemState,
         UpdateService updateService,
+        ApplicationRestartService applicationRestartService,
         NativeDiagnosticsClient nativeDiagnosticsClient,
         NativeBackendStatus nativeBackendStatus,
         HttpServerStatus httpServerStatus,
@@ -93,6 +102,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         _alertManager = alertManager;
         _systemState = systemState;
         _updateService = updateService;
+        _applicationRestartService = applicationRestartService;
         _nativeDiagnosticsClient = nativeDiagnosticsClient;
         _nativeBackendStatus = nativeBackendStatus;
         _httpServerStatus = httpServerStatus;
@@ -116,6 +126,47 @@ public sealed partial class SettingsViewModel : ObservableObject
         {
             _settings.Language = value;
             RefreshBindings();
+        }
+    }
+
+    public TrayToolTipMode SavedTrayToolTipMode => _settings.SavedTrayToolTipMode;
+
+    public bool IsTrayToolTipModeRestartPending =>
+        _settings.IsTrayToolTipModeRestartPending;
+
+    public void ApplyTrayToolTipModeFromUser(TrayToolTipMode mode, Window owner)
+    {
+        ArgumentNullException.ThrowIfNull(owner);
+        TrayToolTipModeChangeDecision decision = TrayToolTipModeChangePolicy.Evaluate(
+            _settings.EffectiveTrayToolTipMode,
+            _settings.SavedTrayToolTipMode,
+            mode
+        );
+        if (!decision.ShouldSave)
+        {
+            return;
+        }
+
+        _settings.SavedTrayToolTipMode = mode;
+        RefreshBindings();
+        if (!decision.ShouldPromptForRestart)
+        {
+            return;
+        }
+
+        string choice = ThemedMessageBox.ShowOptions(
+            owner,
+            Loc["TrayToolTipRestartBody"],
+            Loc["TrayToolTipRestartTitle"],
+            [
+                new ThemedDialogOption(Loc["RestartNow"], "restart-now", IsDefault: true),
+                new ThemedDialogOption(Loc["RestartLater"], "restart-later", IsCancel: true),
+            ],
+            Loc["TrayToolTipRestartDetail"]
+        );
+        if (choice == "restart-now")
+        {
+            _ = _applicationRestartService.TryRestart(owner);
         }
     }
 
@@ -823,6 +874,8 @@ public sealed record LanguageOption(string Code, string NativeName)
 {
     public override string ToString() => NativeName;
 }
+
+public sealed record TrayToolTipModeOption(TrayToolTipMode Mode, string Name);
 
 public sealed record UiScaleOption(int Index, string Code, double Scale, string LabelKey);
 
