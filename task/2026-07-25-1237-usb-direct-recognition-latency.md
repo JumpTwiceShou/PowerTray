@@ -30,7 +30,7 @@
 - [x] Shorten device-readiness initialization and rely on bounded outer retries.
 - [x] Add focused regression tests and timing diagnostics.
 - [x] Run complete Debug/Release builds and test programs serially.
-- [ ] Build, back up, install, and validate the local candidate.
+- [x] Build, back up, install, and validate the local candidate.
 
 ## Baseline Evidence
 
@@ -52,3 +52,8 @@
 - Discovery diagnostics record stage names and elapsed milliseconds only while a session has no known device.
 - Debug and Release solution builds passed on 2026-07-25.
 - Debug and Release `PowerTray.Tests` both passed, including new session-order, attempt-policy, and direct-cache regression coverage.
+- Product commit `9bba504a9c5d5a37c069cac950d8bb4d4dd80fca` was packaged as the unsigned local-only light installer `bin/Release/usb-direct-latency-9bba504-r2/installer/PowerTraySetup-usb-direct-latency-1.4.3.exe`: 3,812,062 bytes, SHA-256 `6A0E63C66CD35CA013F37E6753D22059D21A9CA79D5D6BA282B91EC66C74F1ED`.
+- The prior 586-file `1.4.3+3f8f537...` installation is recoverable at `%TEMP%\PowerTray-1.4.3-before-usb-direct-latency-20260725-124506`; source/backup counts and UI/HID hashes matched before installation.
+- Silent installation exited `0`. Installed UI, HID helper, and hidapi hashes match the candidate; UI/helper report `1.4.3+9bba504...`, edition remains `light`, and autostart remains disabled.
+- The installed UI/helper are responsive; `/health` reports `running`, zero restarts, and the currently online direct `PRO X Wireless` is published. The C54D receiver is present in PnP but its paired mouse is not currently published, which is not treated as a failure without proof that the mouse is awake.
+- A physical C094 unplug/replug is still required to measure the same-process direct-cache path; no physical timing result is fabricated here.
