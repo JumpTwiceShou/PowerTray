@@ -56,6 +56,7 @@ namespace LGSTrayUI
                     CheckTheme.StaticPropertyChanged -= CheckThemePropertyChanged;
                     taskbarIcon.PreviewTrayToolTipOpen -= OnPreviewTrayToolTipOpen;
                     TrayContextMenuPlacement.Detach(taskbarIcon);
+                    TrayToolTipLifecycle.CloseBeforeIconDisposal(taskbarIcon);
                     taskbarIcon.Dispose();
                 }
             }

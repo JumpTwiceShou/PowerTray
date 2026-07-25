@@ -172,6 +172,50 @@ static void TestTrayToolTipSeparators()
     Assert(hardcodetVersion >= new Version(2, 0, 0, 0), "The themed tray tooltip candidate requires Hardcodet 2.x.");
 }
 
+static void TestTrayToolTipDisposalLifecycle()
+{
+    Exception? failure = null;
+    Thread thread = new(() =>
+    {
+        try
+        {
+            object content = new();
+            object dataContext = new();
+            ToolTip toolTip = new()
+            {
+                Content = content,
+                DataContext = dataContext,
+            };
+            bool detached = false;
+
+            TrayToolTipLifecycle.CloseAndDetach(toolTip, () =>
+            {
+                Assert(!toolTip.IsOpen, "A device tooltip must be closed before it is detached from its tray icon.");
+                Assert(toolTip.Content == null, "A disposed tray icon must not leave tooltip content attached to PopupRoot.");
+                Assert(toolTip.DataContext == null, "A disposed tray icon must not leave the device data context attached to its tooltip.");
+                detached = true;
+            });
+
+            Assert(detached, "Tooltip disposal must detach the tooltip from the TaskbarIcon.");
+            bool nullDetached = false;
+            TrayToolTipLifecycle.CloseAndDetach(null, () => nullDetached = true);
+            Assert(nullDetached, "Tooltip disposal must still detach the TaskbarIcon when no resolved tooltip exists.");
+        }
+        catch (Exception ex)
+        {
+            failure = ex;
+        }
+    });
+    thread.SetApartmentState(ApartmentState.STA);
+    thread.Start();
+    thread.Join();
+
+    if (failure != null)
+    {
+        throw new InvalidOperationException("Tray tooltip disposal lifecycle failed.", failure);
+    }
+}
+
 static void TestLowBatteryAlertIcons()
 {
     HashSet<string> fingerprints = [];
@@ -547,6 +591,24 @@ static void TestHidCommandAttemptPolicy()
     Assert(
         HidCommandAttemptPolicy.GetAttempts(true, 1) == 2,
         "C54D short-report recovery must retain two attempts even for speculative probes."
+    );
+    Assert(
+        HidCommandAttemptPolicy.ShouldUseC54dRecovery(
+            true, true, true, true, 7, 0x10, 0x01
+        ),
+        "Normal C54D slot commands should retain robust recovery."
+    );
+    Assert(
+        !HidCommandAttemptPolicy.ShouldUseC54dRecovery(
+            false, true, true, true, 7, 0x10, 0x01
+        ),
+        "The bounded optimistic cached-slot probe should be able to bypass C54D recovery once."
+    );
+    Assert(
+        !HidCommandAttemptPolicy.ShouldUseC54dRecovery(
+            true, true, true, true, 7, 0x10, 0xFF
+        ),
+        "Receiver-register traffic must remain outside C54D device-slot recovery."
     );
 }
 
@@ -1086,9 +1148,9 @@ static void TestEndpointReceiverIdentityValidation()
     Assert(validSerial.ReceiverStableId == "serial:serial-hash", "A validated receiver serial hash should take precedence over ContainerId.");
 }
 
-static void TestDirectDeviceProbeCache()
+static void TestHidDeviceIndexCache()
 {
-    DirectDeviceProbeCache.ClearForTests();
+    HidDeviceIndexCache.ClearForTests();
     try
     {
         Guid containerId = Guid.Parse("a5b4c3d2-e1f0-4a5b-8c7d-6e5f4a3b2c1d");
@@ -1116,31 +1178,58 @@ static void TestDirectDeviceProbeCache()
         };
 
         Assert(
-            DirectDeviceProbeCache.Remember(first, 0xFF),
+            HidDeviceIndexCache.RememberDirect(first, 0xFF),
             "A protocol-confirmed direct FF index with stable endpoint identity should be cached."
         );
         Assert(
-            DirectDeviceProbeCache.TryGet(movedPath, out byte cachedIndex) && cachedIndex == 0xFF,
+            HidDeviceIndexCache.TryGetDirect(movedPath, out byte cachedIndex) && cachedIndex == 0xFF,
             "The direct index cache should survive endpoint path and path-hash changes."
         );
         Assert(
-            !DirectDeviceProbeCache.TryGet(differentDevice, out _),
+            !HidDeviceIndexCache.TryGetDirect(differentDevice, out _),
             "A different stable endpoint identity must not inherit another device's direct index."
         );
         Assert(
-            !DirectDeviceProbeCache.Remember(invalidIndexDevice, 0x01) &&
-            !DirectDeviceProbeCache.TryGet(invalidIndexDevice, out _),
+            !HidDeviceIndexCache.RememberDirect(invalidIndexDevice, 0x01) &&
+            !HidDeviceIndexCache.TryGetDirect(invalidIndexDevice, out _),
             "Receiver pairing slots must never enter the direct-device cache."
         );
         Assert(
-            !DirectDeviceProbeCache.Remember(unstableIdentity, 0x00) &&
-            !DirectDeviceProbeCache.TryGet(unstableIdentity, out _),
+            !HidDeviceIndexCache.RememberDirect(unstableIdentity, 0x00) &&
+            !HidDeviceIndexCache.TryGetDirect(unstableIdentity, out _),
             "Endpoints without a stable serial or container identity must not be cached."
+        );
+        Assert(
+            HidDeviceIndexCache.RememberReceiverSlot(first, 0x03) &&
+            HidDeviceIndexCache.RememberReceiverSlot(movedPath, 0x01),
+            "Protocol-confirmed receiver slots should share the stable path-independent endpoint cache."
+        );
+        Assert(
+            HidDeviceIndexCache.GetReceiverSlots(first).SequenceEqual([(byte)0x01, (byte)0x03]),
+            "Receiver cache values must retain every confirmed slot in deterministic order."
+        );
+        Assert(
+            !HidDeviceIndexCache.TryGetDirect(first, out _),
+            "Remembering receiver transport must clear incompatible direct-index state."
+        );
+        Assert(
+            !HidDeviceIndexCache.RememberReceiverSlot(first, 0x00) &&
+            !HidDeviceIndexCache.RememberReceiverSlot(first, 0xFF),
+            "Direct indexes must never enter the receiver-slot cache."
+        );
+        Assert(
+            !HidDeviceIndexCache.RememberReceiverSlot(unstableIdentity, 0x01),
+            "Receiver slots without a stable endpoint identity must not be cached."
+        );
+        Assert(
+            HidDeviceIndexCache.RememberDirect(first, 0x00) &&
+            HidDeviceIndexCache.GetReceiverSlots(first).Count == 0,
+            "Remembering direct transport must clear incompatible receiver-slot state."
         );
     }
     finally
     {
-        DirectDeviceProbeCache.ClearForTests();
+        HidDeviceIndexCache.ClearForTests();
     }
 }
 
@@ -1196,6 +1285,7 @@ TestNativeIdentityDiagnosticsRedaction();
 TestUpdaterAssetSelectionAndChecksum();
 TestHttpServerLoopbackFallback();
 TestTrayToolTipSeparators();
+TestTrayToolTipDisposalLifecycle();
 TestLowBatteryAlertIcons();
 TestTrayMenuPaletteUsesApplicationThemeColors();
 TestTrayMenuDictionaryDoesNotShadowApplicationPalette();
@@ -1223,7 +1313,7 @@ await TestUpdaterDetachedSignatureVerificationAsync();
 await TestUpdaterFileHashVerificationAsync();
 TestUpdaterTrustedHosts();
 TestEndpointReceiverIdentityValidation();
-TestDirectDeviceProbeCache();
+TestHidDeviceIndexCache();
 TestPersistentReceiverIdentity();
 
 Console.WriteLine("PowerTray.Tests passed.");
