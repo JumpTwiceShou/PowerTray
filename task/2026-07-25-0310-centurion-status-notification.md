@@ -38,7 +38,8 @@
 - [x] Load firmware/hardware/model information lazily into diagnostics.
 - [x] Probe unknown `0xFFA0` Logitech Centurion candidates safely across report 0x51/0x50.
 - [x] Run focused regression tests and rebuild the expanded candidate.
-- [ ] Back up, install, and physically validate the expanded candidate.
+- [x] Back up and install the expanded candidate.
+- [ ] Physically validate the expanded candidate with the PRO X 2 powered on and off.
 
 ## Acceptance Criteria
 
@@ -64,3 +65,6 @@
 - The expanded implementation adds strict bridge MessageEvent decoding, immediate `0x0104` battery publication, first-RX report/address learning, serialized deferred discovery, feature type/version diagnostics, and delayed read-only `0x0100` hardware/firmware collection.
 - Unknown Logitech endpoints enter Centurion probing only when HID enumeration reports an opened `0xFFA0` endpoint. Known product/report mappings remain preferred; unknown products negotiate `0x51` then addressed `0x50`, and create no PowerTray device until real feature/device discovery succeeds.
 - Complete Debug and Release builds and both complete test-program runs passed with SDK 8.0.423 after the installed app was stopped through its supported `--shutdown` path.
+- Product commit `3f8f537c18e6cb505f9f2232b8f319b286bf5c59` was published into the local-only light installer `PowerTraySetup-centurion-readonly-1.4.3.exe` (3,810,287 bytes, SHA-256 `6EC8D729C2BAEE20FF3BEF19A6EF4A3128F551C0DA6F48E6421D7FD7F8E0074A`).
+- The prior 586-file `1.4.3+2e59f04...` installation is backed up at `%TEMP%\PowerTray-1.4.3-before-centurion-readonly-20260725-0510`. Silent installation exited `0`; installed UI/helper hashes match the candidate and both report `1.4.3+3f8f537...`, edition `light`.
+- Post-install health stayed `running` with zero helper restarts and no matching Application Error/.NET Runtime crash. The device count changed from zero to two as the separate PRO X Wireless headset and PRO X2 SUPERSTRIKE mouse appeared; the PRO X 2 receiver continued returning sub-device unavailable because that headset remained powered off, so its new MessageEvent/metadata path still needs the physical power-cycle gate.
