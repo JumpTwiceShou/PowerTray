@@ -70,3 +70,12 @@
 - 不修改 HTTP API 功能；仅记录保留决定。
 - 不绕过工具对 private-key 读取和 secret-file transfer 的安全限制。
 - 不公开发布、不 push、不回复 GitHub Issue。
+
+## 2026-07-25 Infisical Seed Follow-up
+
+- The previous blocker was resolved after explicit maintainer authorization.
+- Windows VM102 verified the canonical 227-byte source key against pinned SPKI SHA-256 `9D08127794D5D85BF45DA60C8BC631CEBFE1E2D62A51140BFB6407FFC634570A`.
+- The managed `push-project-env.ps1` workflow ran dry-run and then apply for the single key `POWERTRAY_UPDATE_ECDSA_PEM_B64` at `dev:/projects/logi`; remote key-name verification passed and the restricted temporary dotenv file was deleted.
+- The current Windows control PC exported the project env to its Git-ignored `.env.local`, restored the local key after an independent fingerprint check, and restricted the key ACL to the release operator plus SYSTEM.
+- The `1.5.0+133578c...` light/full checksum files were signed and both 64-byte IEEE-P1363 signatures verify against the production embedded public key.
+- VM102 and Ubuntu project `.env.local` export verification remains pending; keep this historical cross-device task active until those two managed outputs are checked.
