@@ -25,8 +25,8 @@
 - [x] Add hotplug-registration diagnostics and remove Release device metadata output.
 - [x] Implement mutually exclusive tooltip modes, safe restart, migration, and three-language settings UI.
 - [x] Set version `1.5.0` and add release notes.
-- [ ] Run focused Debug/Release builds, tests, dependency audit, native verification, installer build, and diff checks.
-- [ ] Commit the reviewed source and archive this task with exact evidence and remaining proof gaps.
+- [x] Run focused Debug/Release builds, tests, dependency audit, native verification, installer build, and diff checks.
+- [x] Commit the reviewed source and archive this task with exact evidence and remaining proof gaps.
 
 ## Acceptance Criteria
 
@@ -66,3 +66,10 @@
 - NuGet reported no known vulnerable direct or transitive package in `PowerTray.Tests` and its project graph.
 - Formal hidapi verification passed for Windows x64, the pinned SHA-256, and all 12 required exports; Authenticode remains `NotSigned`.
 - Real Logitech hardware, real Shell hover, mixed-DPI/multi-monitor, and fullscreen acceptance were explicitly waived and were not reclassified as passed.
+- Reviewed product commit: `96f9ca913f61c2cfe0e6403bbb23f862ce7ff892`.
+- Framework-dependent and self-contained Release publish both report `FileVersion 1.5.0.0` and `ProductVersion 1.5.0+96f9ca913f61c2cfe0e6403bbb23f862ce7ff892` for UI and HID assemblies.
+- Local light installer: `bin/Release/powertray-1.5.0-96f9ca9/installer/PowerTraySetup-local-1.5.0.exe`, 3,821,177 bytes, SHA-256 `2A84426CA977F64047663F77117CAFEF167FF0DB4C88AE37028B3D5055EC79EB`.
+- Local full installer: `bin/Release/powertray-1.5.0-96f9ca9/installer/PowerTraySetup-full-local-1.5.0.exe`, 51,601,544 bytes, SHA-256 `7DF51B000A602A919DE3D5BCB5A5A24DD14E4B926BE57D97555C8068F85EF30D`.
+- Matching `.sha256` files were generated. Both installers are intentionally unsigned and no `.sig` files exist because the pinned private key is absent from this machine.
+- The candidate was not installed. The existing installed UI/HID files remain `1.4.3+9ce30bce9c9a63d08949f5f564d20e4da9c6772a`; both original processes are running and `/health` reports `running`, zero restarts, and version 1.4.3.
+- Residual proof gaps: no real hardware/Shell/DPI/fullscreen acceptance; no speculative C54D eviction; no stronger MessagePipe ACL proof beyond existing names/HMAC; no installer Restart Manager rewrite; no Authenticode or update-signature proof.
