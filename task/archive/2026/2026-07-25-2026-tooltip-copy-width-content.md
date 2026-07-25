@@ -21,8 +21,8 @@
 - [x] Add the dedicated wider ComboBox resource and update all three language notes.
 - [x] Restore battery tooltip content to device name, percentage, and optional voltage only.
 - [x] Add focused regression assertions and run necessary Debug/Release validation.
-- [ ] Commit the exact 1.5.0 correction and rebuild local light/full installers.
-- [ ] Update design memory, archive this task, and report artifacts and unverified scope.
+- [x] Commit the exact 1.5.0 correction and rebuild local light/full installers.
+- [x] Update design memory, archive this task, and report artifacts and unverified scope.
 
 ## Acceptance Criteria
 
@@ -48,3 +48,10 @@
 - Focused assertions verify the 28-DIP base width difference, three-language warning semantics, absence of `BatteryStatus*` keys, and absence of charging text/status separators in production tooltip content.
 - SDK 8.0.423 MSBuild Debug and Release solution builds passed with zero warnings and errors without changing `global.json`.
 - Complete Debug and Release test programs passed after supported shutdown of installed `1.5.0+96f9ca9`; the same installed UI/helper were restarted afterward.
+- Product correction commit: `e9ca0b7b3a363f89964611a821b418f66a359499`.
+- Framework-dependent UI/HID assemblies report `FileVersion 1.5.0.0` and `ProductVersion 1.5.0+e9ca0b7b3a363f89964611a821b418f66a359499`.
+- Local light installer: `bin/Release/powertray-1.5.0-e9ca0b7/installer/PowerTraySetup-local-1.5.0.exe`, 3,819,805 bytes, SHA-256 `F5A1D2CAF24F37ACD82767DEC565CC3FC5D073650E46D7416E687ACDA6A3700B`.
+- Local full installer: `bin/Release/powertray-1.5.0-e9ca0b7/installer/PowerTraySetup-full-local-1.5.0.exe`, 51,600,440 bytes, SHA-256 `6B2D73456ACB9CB8952BD0EE4B97B3160E34F7B1992CFBFE3EA7A4AAC06AE7E4`.
+- Matching `.sha256` files were generated; both local candidates are intentionally unsigned because this machine does not hold the pinned update-signing key.
+- The corrected candidate was not installed. The running installed build remains `1.5.0+96f9ca9`; only its supported shutdown/restart path was used for isolated tests.
+- Real Shell rendering, hardware, mixed-DPI, multi-monitor, and fullscreen acceptance remain explicitly unverified.
