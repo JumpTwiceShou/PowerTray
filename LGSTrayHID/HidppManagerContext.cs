@@ -546,7 +546,7 @@ public sealed class HidppManagerContext
             }
 
             List<HidEndpointInfo> centurions = logitechEndpoints
-                .Where(x => x.MessageType == HidppMessageType.CENTURION && KnownLogitechDevices.IsCenturionProduct(x.ProductId))
+                .Where(KnownLogitechDevices.IsCenturionEndpointCandidate)
                 .OrderBy(x => x.UsagePage)
                 .ThenBy(x => x.Path)
                 .ToList();

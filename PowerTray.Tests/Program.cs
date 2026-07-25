@@ -713,6 +713,172 @@ static void TestCenturionConnectionNotificationDecode()
     );
 }
 
+static void TestCenturionBridgeNotificationDecode()
+{
+    const byte bridgeIndex = 0x03;
+    const byte batteryIndex = 0x05;
+    byte[] notificationFrame = CenturionFrameCodec.BuildFrame(
+        CenturionFrameCodec.ReportId,
+        null,
+        [bridgeIndex, 0x10, 0x00, 0x06, 0xFF, batteryIndex, 0x00, 84, 84, 0]
+    );
+    Assert(
+        CenturionBridgeNotificationCodec.TryDecode(
+            notificationFrame,
+            CenturionFrameCodec.ReportId,
+            null,
+            bridgeIndex,
+            out CenturionBridgeNotification? notification
+        ) &&
+        notification != null &&
+        notification.FeatureIndex == batteryIndex &&
+        notification.Function == 0 &&
+        notification.Data.SequenceEqual(new byte[] { 84, 84, 0 }),
+        "An unsolicited Centurion bridge MessageEvent should decode its feature and payload."
+    );
+
+    byte[] responseFrame = CenturionFrameCodec.BuildFrame(
+        CenturionFrameCodec.ReportId,
+        null,
+        [bridgeIndex, 0x10, 0x00, 0x06, 0x00, batteryIndex, 0x0A, 84, 84, 0]
+    );
+    Assert(
+        !CenturionBridgeNotificationCodec.TryDecode(
+            responseFrame,
+            CenturionFrameCodec.ReportId,
+            null,
+            bridgeIndex,
+            out _
+        ),
+        "A solicited bridge response must not be treated as a notification."
+    );
+
+    byte[] wrongLength = CenturionFrameCodec.BuildFrame(
+        CenturionFrameCodec.ReportId,
+        null,
+        [bridgeIndex, 0x10, 0x00, 0x07, 0xFF, batteryIndex, 0x00, 84, 84, 0]
+    );
+    Assert(
+        !CenturionBridgeNotificationCodec.TryDecode(
+            wrongLength,
+            CenturionFrameCodec.ReportId,
+            null,
+            bridgeIndex,
+            out _
+        ),
+        "A bridge MessageEvent with a mismatched declared length must be rejected."
+    );
+
+    byte[] wrongAddress = CenturionFrameCodec.BuildFrame(
+        CenturionFrameCodec.AddressedReportId,
+        0x2A,
+        [bridgeIndex, 0x10, 0x00, 0x06, 0xFF, batteryIndex, 0x00, 84, 84, 0]
+    );
+    Assert(
+        !CenturionBridgeNotificationCodec.TryDecode(
+            wrongAddress,
+            CenturionFrameCodec.AddressedReportId,
+            0x2B,
+            bridgeIndex,
+            out _
+        ),
+        "An addressed bridge MessageEvent for another Centurion address must be rejected."
+    );
+}
+
+static void TestCenturionFeatureMetadataDecode()
+{
+    IReadOnlyList<CenturionFeatureDescriptor> bulk = CenturionFeatureSetCodec.DecodeEntries(
+        [0x02, 0x01, 0x04, 0x02, 0x01, 0x01, 0x08, 0x01, 0x05],
+        0x05
+    );
+    Assert(
+        bulk.Count == 2 &&
+        bulk[0] == new CenturionFeatureDescriptor(0x0104, 0x05, 0x02, 0x01) &&
+        bulk[1] == new CenturionFeatureDescriptor(0x0108, 0x06, 0x01, 0x05),
+        "Bulk Centurion feature entries should retain index, type, and version."
+    );
+
+    IReadOnlyList<CenturionFeatureDescriptor> last = CenturionFeatureSetCodec.DecodeEntries(
+        [0x00, 0x06, 0x36, 0x00, 0x01],
+        0x09
+    );
+    Assert(
+        last.Count == 1 &&
+        last[0] == new CenturionFeatureDescriptor(0x0636, 0x09, 0x00, 0x01),
+        "The final per-index Centurion feature entry should decode when remaining count is zero."
+    );
+}
+
+static void TestCenturionReadOnlyDeviceInfoDecode()
+{
+    Assert(
+        CenturionDeviceInfoCodec.TryDecodeHardware(
+            [0x02, 0x07, 0x0A, 0xF7],
+            out CenturionHardwareInfo? hardware
+        ) &&
+        hardware == new CenturionHardwareInfo(0x02, 0x07, 0x0AF7),
+        "Centurion hardware information should decode model, revision, and product id."
+    );
+    Assert(
+        CenturionDeviceInfoCodec.TryDecodeFirmware(
+            [0x01, 0x00, 0x02, 0x07, 0x03, (byte)'A', (byte)'B', (byte)'C'],
+            out CenturionFirmwareInfo? firmware
+        ) &&
+        firmware == new CenturionFirmwareInfo(0x01, "ABC", "2.07"),
+        "Centurion firmware information should decode type, name, and version."
+    );
+    Assert(
+        !CenturionDeviceInfoCodec.TryDecodeFirmware(
+            [0x01, 0x00, 0x02, 0x07, 0x08, (byte)'A'],
+            out _
+        ),
+        "A truncated Centurion firmware name must be rejected."
+    );
+}
+
+static void TestCenturionEndpointCandidatePolicy()
+{
+    HidEndpointInfo unknownCenturion = new(
+        "unknown-centurion",
+        Guid.NewGuid(),
+        0x046D,
+        0x0C01,
+        0x0100,
+        "Logitech",
+        "Future Centurion Device",
+        null,
+        "path-hash",
+        "opened",
+        0xFFA0,
+        0x01,
+        3,
+        HidppMessageType.CENTURION
+    );
+    Assert(
+        KnownLogitechDevices.IsCenturionEndpointCandidate(unknownCenturion),
+        "An unknown Logitech product should be a Centurion candidate when its HID descriptor identifies the protocol."
+    );
+    Assert(
+        !KnownLogitechDevices.TryGetCenturionReportId(unknownCenturion.ProductId, out _),
+        "An unknown Centurion candidate must negotiate its report id instead of inheriting a guessed model mapping."
+    );
+    Assert(
+        KnownLogitechDevices.TryGetCenturionReportId(0x0AF7, out byte proX2ReportId) &&
+        proX2ReportId == CenturionFrameCodec.ReportId &&
+        KnownLogitechDevices.TryGetCenturionReportId(0x0B18, out byte g522ReportId) &&
+        g522ReportId == CenturionFrameCodec.AddressedReportId,
+        "Known Centurion products should keep their validated report-id mappings."
+    );
+    Assert(
+        !KnownLogitechDevices.IsCenturionEndpointCandidate(unknownCenturion with
+        {
+            UsagePage = 0xFF00,
+        }),
+        "An endpoint outside the Centurion HID usage page must not enter protocol probing."
+    );
+}
+
 static void TestDiagnosticsPrivacyScope()
 {
     Guid containerId = Guid.Parse("00112233-4455-6677-8899-aabbccddeeff");
@@ -949,6 +1115,10 @@ TestDeviceTransportPolicy();
 TestNativeSettingsValidation();
 TestCenturionFrameValidation();
 TestCenturionConnectionNotificationDecode();
+TestCenturionBridgeNotificationDecode();
+TestCenturionFeatureMetadataDecode();
+TestCenturionReadOnlyDeviceInfoDecode();
+TestCenturionEndpointCandidatePolicy();
 TestDiagnosticsPrivacyScope();
 await TestDirectionalNamedPipeIpcAsync();
 TestIpcSessionAuthentication();

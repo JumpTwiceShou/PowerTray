@@ -1,4 +1,5 @@
 using LGSTrayPrimitives;
+using LGSTrayHID.HidApi;
 
 namespace LGSTrayHID;
 
@@ -47,9 +48,29 @@ internal static class KnownLogitechDevices
         return productId is 0x0AF7 or 0x0B18 or 0x0B19;
     }
 
-    public static byte GetCenturionReportId(ushort productId)
+    public static bool IsCenturionEndpointCandidate(HidEndpointInfo endpoint)
     {
-        return productId is 0x0B18 or 0x0B19 ? (byte)0x50 : (byte)0x51;
+        return endpoint.VendorId == 0x046D &&
+            endpoint.OpenStatus.Equals("opened", StringComparison.OrdinalIgnoreCase) &&
+            endpoint.UsagePage == 0xFFA0 &&
+            endpoint.MessageType == HidppMessageType.CENTURION;
+    }
+
+    public static bool TryGetCenturionReportId(ushort productId, out byte reportId)
+    {
+        switch (productId)
+        {
+            case 0x0AF7:
+                reportId = CenturionFrameCodec.ReportId;
+                return true;
+            case 0x0B18:
+            case 0x0B19:
+                reportId = CenturionFrameCodec.AddressedReportId;
+                return true;
+            default:
+                reportId = default;
+                return false;
+        }
     }
 
     public static string GetFallbackName(DeviceType deviceType, ushort productId)

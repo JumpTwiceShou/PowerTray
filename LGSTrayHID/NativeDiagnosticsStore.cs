@@ -8,7 +8,7 @@ namespace LGSTrayHID;
 
 internal sealed class NativeDiagnosticsSnapshot
 {
-    public int SchemaVersion { get; set; } = 2;
+    public int SchemaVersion { get; set; } = 3;
     public DateTimeOffset GeneratedAt { get; set; } = DateTimeOffset.Now;
     public DateTimeOffset? LastSuccessfulCommandAt { get; set; }
     public string? LastError { get; set; }
@@ -79,9 +79,22 @@ internal sealed class CenturionDiscoveryDiagnostic
     public string? DeviceAddress { get; set; }
     public int ProbeAttempts { get; set; }
     public Dictionary<string, string> DongleFeatureMap { get; set; } = [];
+    public Dictionary<string, string> DongleFeatureMetadata { get; set; } = [];
     public string? BridgeIndex { get; set; }
     public Dictionary<string, string> SubDeviceFeatureMap { get; set; } = [];
+    public Dictionary<string, string> SubDeviceFeatureMetadata { get; set; } = [];
     public string? BatteryRawResponse { get; set; }
+    public string? HardwareModelId { get; set; }
+    public string? HardwareRevision { get; set; }
+    public string? HardwareProductId { get; set; }
+    public List<CenturionFirmwareDiagnostic> Firmware { get; set; } = [];
+}
+
+internal sealed class CenturionFirmwareDiagnostic
+{
+    public string Type { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string Version { get; set; } = string.Empty;
 }
 
 internal sealed class NativeDiagnosticEvent
@@ -263,6 +276,23 @@ internal static class NativeDiagnosticsStore
         return features
             .OrderBy(x => x.Value)
             .ToDictionary(x => FormatHex(x.Key, 4), x => FormatHex(x.Value, 2));
+    }
+
+    internal static Dictionary<string, string> FormatFeatureMetadata(
+        IEnumerable<CenturionFeatureDescriptor> features
+    )
+    {
+        return features
+            .OrderBy(x => x.Index)
+            .GroupBy(x => x.FeatureId)
+            .ToDictionary(
+                x => FormatHex(x.Key, 4),
+                x =>
+                {
+                    CenturionFeatureDescriptor feature = x.Last();
+                    return $"index={FormatHex(feature.Index, 2)},type={FormatHex(feature.Type, 2)},version={feature.Version}";
+                }
+            );
     }
 
     internal static string FormatBytes(byte[]? bytes)
