@@ -67,6 +67,7 @@ namespace LGSTrayUI
                     {
                         taskbarIcon.PreviewTrayToolTipOpen -= OnPreviewTrayToolTipOpen;
                     }
+                    TrayIconSettingsInteraction.Detach(taskbarIcon);
                     TrayContextMenuPlacement.Detach(taskbarIcon);
                     BindingOperations.ClearBinding(taskbarIcon, TaskbarIcon.ToolTipTextProperty);
                     taskbarIcon.ToolTipText = string.Empty;
@@ -161,6 +162,7 @@ namespace LGSTrayUI
             {
                 Interval = TimeSpan.FromMilliseconds(500),
             };
+            TrayIconSettingsInteraction.Attach(taskbarIcon);
             TrayContextMenuPlacement.Attach(taskbarIcon);
             _blinkTimer.Tick += (_, _) =>
             {

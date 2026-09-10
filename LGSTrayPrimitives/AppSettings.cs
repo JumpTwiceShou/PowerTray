@@ -88,6 +88,10 @@ public class NativeDeviceManagerSettings : IDeviceManagerSettings
 {
     private int _retryTime = 10;
     private int _pollPeriod = 600;
+    private int _dischargingPollPeriod = 300;
+    private int _chargingPollPeriod = 60;
+    private int _lowBatteryPollPeriod = 60;
+    private int _lowBatteryPollThreshold = 20;
     private int _presencePeriod = 15;
     private int _consecutiveFailureThreshold = 3;
     private string[] _disabledDevices = [];
@@ -102,6 +106,30 @@ public class NativeDeviceManagerSettings : IDeviceManagerSettings
     {
         get => _pollPeriod;
         set => _pollPeriod = Math.Clamp(value, 30, 86400);
+    }
+
+    public int ChargingPollPeriod
+    {
+        get => _chargingPollPeriod;
+        set => _chargingPollPeriod = Math.Clamp(value, 30, 86400);
+    }
+
+    public int DischargingPollPeriod
+    {
+        get => _dischargingPollPeriod;
+        set => _dischargingPollPeriod = Math.Clamp(value, 30, 86400);
+    }
+
+    public int LowBatteryPollPeriod
+    {
+        get => _lowBatteryPollPeriod;
+        set => _lowBatteryPollPeriod = Math.Clamp(value, 30, 86400);
+    }
+
+    public int LowBatteryPollThreshold
+    {
+        get => _lowBatteryPollThreshold;
+        set => _lowBatteryPollThreshold = Math.Clamp(value, 1, 100);
     }
 
     public int PresencePeriod

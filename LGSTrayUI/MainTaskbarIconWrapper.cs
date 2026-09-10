@@ -11,6 +11,7 @@ public class MainTaskBarIcon : TaskbarIcon
     {
         ContextMenu = (System.Windows.Controls.ContextMenu)Application.Current.FindResource("SysTrayMenu");
         TrayContextMenuPlacement.Attach(this);
+        TrayIconSettingsInteraction.Attach(this);
         BatteryIconDrawing.DrawUnknown(this);
     }
 }
@@ -20,7 +21,7 @@ public class MainTaskbarIconWrapper : IDisposable
     private readonly AlertStateService _alertState;
     private readonly NotificationService _notificationService;
     private readonly DispatcherTimer _blinkTimer;
-    private TaskbarIcon? _taskbarIcon;
+    private MainTaskBarIcon? _taskbarIcon;
     private bool _blinkVisible = true;
     private bool disposedValue;
 
@@ -65,8 +66,7 @@ public class MainTaskbarIconWrapper : IDisposable
             _notificationService.NotificationRequested -= OnNotificationRequested;
             LogiDeviceIcon.RefCountChanged -= OnDeviceIconRefCountChanged;
             CheckTheme.StaticPropertyChanged -= OnThemeChanged;
-            _taskbarIcon?.Dispose();
-            _taskbarIcon = null;
+            DisposeTaskbarIcon();
         }
 
         disposedValue = true;
@@ -86,13 +86,25 @@ public class MainTaskbarIconWrapper : IDisposable
 
         if (deviceIconCount > 0)
         {
-            _taskbarIcon?.Dispose();
-            _taskbarIcon = null;
+            DisposeTaskbarIcon();
             return;
         }
 
         _taskbarIcon ??= new MainTaskBarIcon();
         DrawMainIcon();
+    }
+
+    private void DisposeTaskbarIcon()
+    {
+        if (_taskbarIcon == null)
+        {
+            return;
+        }
+
+        TrayIconSettingsInteraction.Detach(_taskbarIcon);
+        TrayContextMenuPlacement.Detach(_taskbarIcon);
+        _taskbarIcon.Dispose();
+        _taskbarIcon = null;
     }
 
     private void OnAlertStateChanged()

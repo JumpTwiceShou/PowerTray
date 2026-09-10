@@ -38,9 +38,13 @@ namespace LGSTrayHID.Features
 
             if (ret.Length < 7 || ret.GetFeatureIndex() == 0x8F) { return null; }
 
-            int mv = (ret.GetParam(0) << 8) + ret.GetParam(1);
+            return Decode(ret.GetParam(0), ret.GetParam(1), ret.GetParam(2));
+        }
+
+        public static BatteryUpdateReturn Decode(byte millivoltsHigh, byte millivoltsLow, byte flags)
+        {
+            int mv = (millivoltsHigh << 8) + millivoltsLow;
             double batPercent = LookupBatPercent(mv);
-            byte flags = ret.GetParam(2);
 
             PowerSupplyStatus status;
             if ((flags & 0x80) > 0)

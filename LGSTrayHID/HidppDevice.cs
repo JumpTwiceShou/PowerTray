@@ -16,13 +16,17 @@ namespace LGSTrayHID
     public class HidppDevice
     {
         private readonly SemaphoreSlim _initSemaphore = new(1, 1);
+        private readonly object _batteryStateSync = new();
+        private readonly AdaptiveBatteryPollSchedule _batteryPollSchedule = new();
         private Func<HidppDevice, Task<BatteryUpdateReturn?>>? _getBatteryAsync;
+        private ushort? _selectedBatteryFeatureId;
 
         public string DeviceName { get; private set; } = string.Empty;
         public int DeviceType { get; private set; } = 3;
         public string Identifier { get; private set; } = string.Empty;
 
         private BatteryUpdateReturn lastBatteryReturn;
+        private bool _hasBatteryState;
         private DateTimeOffset lastUpdate = DateTimeOffset.MinValue;
         private bool _offlineSignalled;
         private int _consecutiveFailures;
@@ -228,12 +232,13 @@ namespace LGSTrayHID
             Log.WriteLine("---");
 #endif
 
-            _getBatteryAsync = FeatureMap switch
+            _selectedBatteryFeatureId = SelectBatteryFeatureId();
+            _getBatteryAsync = _selectedBatteryFeatureId switch
             {
-                { } when FeatureMap.ContainsKey(0x1000) => Battery1000.GetBatteryAsync,
-                { } when FeatureMap.ContainsKey(0x1001) => Battery1001.GetBatteryAsync,
-                { } when FeatureMap.ContainsKey(0x1004) => Battery1004.GetBatteryAsync,
-                { } when FeatureMap.ContainsKey(0x1F20) => Battery1F20.GetBatteryAsync,
+                0x1000 => Battery1000.GetBatteryAsync,
+                0x1001 => Battery1001.GetBatteryAsync,
+                0x1004 => Battery1004.GetBatteryAsync,
+                0x1F20 => Battery1F20.GetBatteryAsync,
                 _ => null
             };
 
@@ -309,19 +314,11 @@ namespace LGSTrayHID
                 }
 
                 await BatteryPollingLoop.RunAsync(
-                    async token =>
-                    {
-                        DateTimeOffset now = DateTimeOffset.Now;
-#if DEBUG
-                        DateTimeOffset expectedUpdateTime = lastUpdate.AddSeconds(1);
-#else
-                        DateTimeOffset expectedUpdateTime = lastUpdate.AddSeconds(GlobalSettings.settings.PollPeriod);
-#endif
-                        if (now < expectedUpdateTime)
-                        {
-                            await Task.Delay(expectedUpdateTime - now, token);
-                        }
-                    },
+                    token => _batteryPollSchedule.WaitUntilDueAsync(
+                        GetLastUpdate,
+                        GetBatteryPollInterval,
+                        token
+                    ),
                     _ => UpdateBattery(),
                     TimeSpan.FromSeconds(GlobalSettings.settings.RetryTime),
                     ex => NativeDiagnosticsStore.RecordError(
@@ -365,11 +362,90 @@ namespace LGSTrayHID
 
         private string? GetSelectedBatteryFeature()
         {
-            if (FeatureMap.ContainsKey(0x1000)) { return "0x1000"; }
-            if (FeatureMap.ContainsKey(0x1001)) { return "0x1001"; }
-            if (FeatureMap.ContainsKey(0x1004)) { return "0x1004"; }
-            if (FeatureMap.ContainsKey(0x1F20)) { return "0x1F20"; }
+            return _selectedBatteryFeatureId.HasValue
+                ? $"0x{_selectedBatteryFeatureId.Value:X4}"
+                : null;
+        }
+
+        private ushort? SelectBatteryFeatureId()
+        {
+            if (FeatureMap.ContainsKey(0x1000)) { return 0x1000; }
+            if (FeatureMap.ContainsKey(0x1001)) { return 0x1001; }
+            if (FeatureMap.ContainsKey(0x1004)) { return 0x1004; }
+            if (FeatureMap.ContainsKey(0x1F20)) { return 0x1F20; }
             return null;
+        }
+
+        private DateTimeOffset GetLastUpdate()
+        {
+            lock (_batteryStateSync)
+            {
+                return lastUpdate;
+            }
+        }
+
+        private TimeSpan GetBatteryPollInterval()
+        {
+#if DEBUG
+            return TimeSpan.FromSeconds(1);
+#else
+            return AdaptiveBatteryPollingPolicy.GetPollInterval(
+                new AdaptiveBatteryPollingSettings(
+                    GlobalSettings.settings.PollPeriod,
+                    GlobalSettings.settings.DischargingPollPeriod,
+                    GlobalSettings.settings.ChargingPollPeriod,
+                    GlobalSettings.settings.LowBatteryPollPeriod,
+                    GlobalSettings.settings.LowBatteryPollThreshold
+                ),
+                GetBatteryPollingState()
+            );
+#endif
+        }
+
+        private AdaptiveBatteryPollingState GetBatteryPollingState()
+        {
+            lock (_batteryStateSync)
+            {
+                return new AdaptiveBatteryPollingState(
+                    _hasBatteryState,
+                    lastBatteryReturn.batteryPercentage,
+                    lastBatteryReturn.status
+                );
+            }
+        }
+
+        internal bool TryHandleBatteryNotification(ReadOnlySpan<byte> frame)
+        {
+            if (!_selectedBatteryFeatureId.HasValue ||
+                !FeatureMap.TryGetValue(_selectedBatteryFeatureId.Value, out byte featureIndex) ||
+                !HidppBatteryNotificationCodec.TryDecode(
+                    frame,
+                    _deviceIdx,
+                    _selectedBatteryFeatureId.Value,
+                    featureIndex,
+                    out HidppBatteryNotification notification
+                ))
+            {
+                return false;
+            }
+
+            if (!notification.Battery.HasValue || string.IsNullOrWhiteSpace(Identifier))
+            {
+                return true;
+            }
+
+            if (TryValidateBattery(notification.Battery.Value, out BatteryUpdateReturn validated))
+            {
+                SignalBatteryUpdate(validated, false);
+            }
+            else
+            {
+                NativeDiagnosticsStore.RecordError(
+                    $"Invalid HID++ battery event for {NativeDiagnosticsStore.HashForDiagnostics(Identifier)} feature=0x{notification.FeatureId:X4}."
+                );
+            }
+
+            return true;
         }
 
         private static byte[] ToBytes(Hidpp20 message) => message.Length == 0 ? [] : (byte[])message;
@@ -404,20 +480,49 @@ namespace LGSTrayHID
 
         private void SignalBatteryUpdate(BatteryUpdateReturn batStatus, bool forceIpcUpdate)
         {
-            bool wasOffline = _offlineSignalled;
-            lastUpdate = DateTimeOffset.Now;
-            _offlineSignalled = false;
-            _consecutiveFailures = 0;
+            UpdateMessage? updateMessage = null;
+            lock (_batteryStateSync)
+            {
+                batStatus = HidppBatteryNotificationCodec.PreserveKnownPercentage(
+                    _selectedBatteryFeatureId,
+                    batStatus,
+                    _hasBatteryState ? lastBatteryReturn : null
+                );
 
-            if (!DeviceTransportPolicy.ShouldPublishUpdate(forceIpcUpdate, wasOffline, batStatus, lastBatteryReturn))
+                bool wasOffline = _offlineSignalled;
+                lastUpdate = DateTimeOffset.Now;
+                _offlineSignalled = false;
+                _consecutiveFailures = 0;
+
+                bool shouldPublish = DeviceTransportPolicy.ShouldPublishUpdate(
+                    forceIpcUpdate,
+                    wasOffline,
+                    batStatus,
+                    lastBatteryReturn
+                );
+                lastBatteryReturn = batStatus;
+                _hasBatteryState = true;
+                if (shouldPublish)
+                {
+                    updateMessage = new UpdateMessage(
+                        Identifier,
+                        batStatus.batteryPercentage,
+                        batStatus.status,
+                        batStatus.batteryMVolt,
+                        lastUpdate
+                    );
+                }
+            }
+
+            _batteryPollSchedule.Reschedule();
+            if (updateMessage == null)
             {
                 return;
             }
 
-            lastBatteryReturn = batStatus;
             HidppManagerContext.Instance.SignalDeviceEvent(
                 IPCMessageType.UPDATE,
-                new UpdateMessage(Identifier, batStatus.batteryPercentage, batStatus.status, batStatus.batteryMVolt, lastUpdate)
+                updateMessage
             );
         }
 

@@ -553,10 +553,33 @@ namespace LGSTrayHID
                 return;
             }
 
+            if (TryHandleStandardBatteryNotification(buffer))
+            {
+                return;
+            }
+
             if (!_channel.Writer.TryWrite(buffer) && !Disposed)
             {
                 NativeDiagnosticsStore.RecordError("HID response channel rejected a response.");
             }
+        }
+
+        private bool TryHandleStandardBatteryNotification(byte[] buffer)
+        {
+            if (buffer.Length < 7 ||
+                (buffer[0] != 0x10 && buffer[0] != 0x11) ||
+                buffer[3] != 0x00)
+            {
+                return false;
+            }
+
+            HidppDevice? device;
+            lock (_deviceCollection)
+            {
+                _deviceCollection.TryGetValue(buffer[1], out device);
+            }
+
+            return device?.TryHandleBatteryNotification(buffer) == true;
         }
 
         private void ObserveCenturionFrame(byte[] buffer)

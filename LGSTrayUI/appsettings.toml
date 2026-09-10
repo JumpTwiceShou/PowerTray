@@ -20,8 +20,19 @@ enabled = true
 # Time in seconds to retry a device poll after a failed attempt.
 retryTime = 10
 
-# Time in seconds until the next full battery poll after success.
+# Full/fallback poll period. Centurion retains this existing interval.
 pollPeriod = 600
+
+# Faster standard HID++ state intervals never become slower than pollPeriod.
+# Use this period while a standard HID++ device is discharging or not charging.
+dischargingPollPeriod = 300
+
+# Use this period while a standard HID++ device reports that it is charging.
+chargingPollPeriod = 60
+
+# Low battery takes priority over the other standard HID++ states.
+lowBatteryPollPeriod = 60
+lowBatteryPollThreshold = 20
 
 # Time in seconds between lightweight presence checks. This does not rebuild HID sessions.
 presencePeriod = 15

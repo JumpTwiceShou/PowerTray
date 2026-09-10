@@ -93,6 +93,101 @@ static void TestBattery1001LookupBoundaries()
     Assert(Battery1001.LookupBatPercent(3536) == 0, "Below the lowest Battery1001 LUT threshold should decode to 0%.");
 }
 
+static void TestHidppBatteryNotificationDecode()
+{
+    byte[] capturedDischarging =
+    [
+        0x11, 0x01, 0x06, 0x00, 0x26, 0x04, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+    ];
+    Assert(
+        HidppBatteryNotificationCodec.TryDecode(capturedDischarging, 0x01, 0x1004, 0x06, out HidppBatteryNotification unplugged),
+        "The captured Superstrike 0x1004 unplug event should decode."
+    );
+    BatteryUpdateReturn unpluggedBattery = unplugged.Battery
+        ?? throw new InvalidOperationException("The captured Superstrike unplug event should contain battery data.");
+    Assert(unpluggedBattery.batteryPercentage == 38, "The captured Superstrike event should report 38%.");
+    Assert(
+        unpluggedBattery.status == PowerSupplyStatus.POWER_SUPPLY_STATUS_DISCHARGING,
+        "The captured Superstrike unplug event should report discharging."
+    );
+
+    byte[] capturedCharging = capturedDischarging.ToArray();
+    capturedCharging[6] = 0x01;
+    capturedCharging[7] = 0x01;
+    Assert(
+        HidppBatteryNotificationCodec.TryDecode(capturedCharging, 0x01, 0x1004, 0x06, out HidppBatteryNotification pluggedIn),
+        "The captured Superstrike 0x1004 plug event should decode."
+    );
+    Assert(
+        pluggedIn.Battery?.status == PowerSupplyStatus.POWER_SUPPLY_STATUS_CHARGING,
+        "The captured Superstrike plug event should report charging."
+    );
+
+    byte[] responseFrame = capturedCharging.ToArray();
+    responseFrame[3] = 0x1A;
+    Assert(
+        !HidppBatteryNotificationCodec.TryDecode(responseFrame, 0x01, 0x1004, 0x06, out _),
+        "A queried 0x1004 command response must not be consumed as an event."
+    );
+    Assert(
+        !HidppBatteryNotificationCodec.TryDecode(capturedCharging, 0x02, 0x1004, 0x06, out _),
+        "A battery event for another device index must not be consumed."
+    );
+    Assert(
+        !HidppBatteryNotificationCodec.TryDecode(capturedCharging, 0x01, 0x1004, 0x07, out _),
+        "A battery event for another feature index must not be consumed."
+    );
+    Assert(
+        !HidppBatteryNotificationCodec.TryDecode(capturedCharging, 0x01, 0x9999, 0x06, out _),
+        "An unsupported feature id must not be consumed as a battery event."
+    );
+    Assert(
+        !HidppBatteryNotificationCodec.TryDecode([0x11, 0x01, 0x06, 0x00, 0x26, 0x04], 0x01, 0x1004, 0x06, out _),
+        "A truncated battery event must not be consumed."
+    );
+    Assert(
+        !HidppBatteryNotificationCodec.TryDecode([0x12, 0x01, 0x06, 0x00, 0x26, 0x04, 0x01], 0x01, 0x1004, 0x06, out _),
+        "A non-HID++ report id must not be consumed."
+    );
+
+    Assert(
+        HidppBatteryNotificationCodec.TryDecode([0x10, 0x02, 0x07, 0x00, 0x00, 0x14, 0x01], 0x02, 0x1000, 0x07, out HidppBatteryNotification statusOnly),
+        "A 0x1000 charging notification should decode."
+    );
+    BatteryUpdateReturn statusOnlyBattery = statusOnly.Battery
+        ?? throw new InvalidOperationException("The 0x1000 charging notification should contain status data.");
+    BatteryUpdateReturn preserved = HidppBatteryNotificationCodec.PreserveKnownPercentage(
+        0x1000,
+        statusOnlyBattery,
+        new BatteryUpdateReturn(55, PowerSupplyStatus.POWER_SUPPLY_STATUS_DISCHARGING, -1)
+    );
+    Assert(preserved.batteryPercentage == 55, "A status-only 0x1000 charging event should preserve the previous percentage.");
+    Assert(preserved.status == PowerSupplyStatus.POWER_SUPPLY_STATUS_CHARGING, "A preserved 0x1000 event should still update charging state.");
+    Assert(Battery1000.Decode(0, 3).batteryPercentage == 100, "A completed 0x1000 charge should resolve to 100%.");
+
+    Assert(
+        HidppBatteryNotificationCodec.TryDecode([0x11, 0x03, 0x07, 0x00, 0x0F, 0x53, 0x80], 0x03, 0x1001, 0x07, out HidppBatteryNotification voltageEvent),
+        "A 0x1001 voltage notification should decode."
+    );
+    Assert(voltageEvent.Battery?.batteryMVolt == 3923, "The 0x1001 notification should decode millivolts.");
+    Assert(voltageEvent.Battery?.batteryPercentage == 70, "The 0x1001 notification should estimate percentage with the production LUT.");
+    Assert(voltageEvent.Battery?.status == PowerSupplyStatus.POWER_SUPPLY_STATUS_CHARGING, "The 0x1001 notification should decode charging flags.");
+
+    Assert(
+        HidppBatteryNotificationCodec.TryDecode([0x11, 0x04, 0x08, 0x00, 0x10, 0x5A, 0x03], 0x04, 0x1F20, 0x08, out HidppBatteryNotification adcEvent),
+        "A 0x1F20 ADC notification should decode."
+    );
+    Assert(adcEvent.Battery?.batteryMVolt == 4186, "The 0x1F20 notification should decode millivolts.");
+    Assert(adcEvent.Battery?.status == PowerSupplyStatus.POWER_SUPPLY_STATUS_CHARGING, "The 0x1F20 notification should decode charging flags.");
+    Assert(
+        HidppBatteryNotificationCodec.TryDecode([0x11, 0x04, 0x08, 0x00, 0x10, 0x5A, 0x00], 0x04, 0x1F20, 0x08, out HidppBatteryNotification inactiveAdc) &&
+        inactiveAdc.Battery == null,
+        "An inactive 0x1F20 event should be consumed without publishing fabricated battery data."
+    );
+}
+
 static void TestHidDeviceInfoX64AbiLayout()
 {
     Assert(Environment.Is64BitProcess, "Native HID ABI validation must run as x64.");
@@ -372,6 +467,100 @@ static async Task TestBatteryPollingLoopRecoversAfterUnexpectedFailureAsync()
     Assert(recordedErrors == 1, "The unexpected battery polling failure should be recorded exactly once.");
 }
 
+static void TestAdaptiveBatteryPollingPolicy()
+{
+    AdaptiveBatteryPollingSettings settings = new(600, 300, 60, 60, 20);
+    Assert(
+        AdaptiveBatteryPollingPolicy.GetPollInterval(
+            settings,
+            new AdaptiveBatteryPollingState(false, 0, PowerSupplyStatus.POWER_SUPPLY_STATUS_UNKNOWN)
+        ) == TimeSpan.FromSeconds(600),
+        "Devices without a valid battery state must use the fallback poll period."
+    );
+    Assert(
+        AdaptiveBatteryPollingPolicy.GetPollInterval(
+            settings,
+            new AdaptiveBatteryPollingState(true, 80, PowerSupplyStatus.POWER_SUPPLY_STATUS_DISCHARGING)
+        ) == TimeSpan.FromSeconds(300),
+        "Normally discharging devices should use the five-minute poll period."
+    );
+    Assert(
+        AdaptiveBatteryPollingPolicy.GetPollInterval(
+            settings,
+            new AdaptiveBatteryPollingState(true, 80, PowerSupplyStatus.POWER_SUPPLY_STATUS_NOT_CHARGING)
+        ) == TimeSpan.FromSeconds(300),
+        "Devices that are not charging should use the normal discharging poll period."
+    );
+    Assert(
+        AdaptiveBatteryPollingPolicy.GetPollInterval(
+            settings,
+            new AdaptiveBatteryPollingState(true, 80, PowerSupplyStatus.POWER_SUPPLY_STATUS_CHARGING)
+        ) == TimeSpan.FromSeconds(60),
+        "Charging devices should use the faster charging poll period."
+    );
+    Assert(
+        AdaptiveBatteryPollingPolicy.GetPollInterval(
+            settings,
+            new AdaptiveBatteryPollingState(true, 100, PowerSupplyStatus.POWER_SUPPLY_STATUS_FULL)
+        ) == TimeSpan.FromSeconds(600),
+        "Full devices should use the fallback poll period."
+    );
+    Assert(
+        AdaptiveBatteryPollingPolicy.GetPollInterval(
+            settings,
+            new AdaptiveBatteryPollingState(true, 20, PowerSupplyStatus.POWER_SUPPLY_STATUS_DISCHARGING)
+        ) == TimeSpan.FromSeconds(60),
+        "Low battery must take priority over the normal discharging period."
+    );
+    Assert(
+        AdaptiveBatteryPollingPolicy.GetPollInterval(
+            settings,
+            new AdaptiveBatteryPollingState(true, 20.01, PowerSupplyStatus.POWER_SUPPLY_STATUS_DISCHARGING)
+        ) == TimeSpan.FromSeconds(300),
+        "Battery percentages above the low threshold should retain the discharging period."
+    );
+    Assert(
+        AdaptiveBatteryPollingPolicy.GetPollInterval(
+            new AdaptiveBatteryPollingSettings(30, 300, 300, 300, 20),
+            new AdaptiveBatteryPollingState(true, 80, PowerSupplyStatus.POWER_SUPPLY_STATUS_DISCHARGING)
+        ) == TimeSpan.FromSeconds(30),
+        "Adaptive polling must never become slower than the configured fallback period."
+    );
+    Assert(
+        AdaptiveBatteryPollingPolicy.GetPollInterval(
+            new AdaptiveBatteryPollingSettings(int.MaxValue, -1, -1, -1, int.MaxValue),
+            new AdaptiveBatteryPollingState(true, 80, PowerSupplyStatus.POWER_SUPPLY_STATUS_DISCHARGING)
+        ) == TimeSpan.FromSeconds(30),
+        "Adaptive polling inputs should remain within the native timing bounds."
+    );
+}
+
+static async Task TestAdaptiveBatteryPollScheduleReschedulesAsync()
+{
+    AdaptiveBatteryPollSchedule schedule = new();
+    AdaptiveBatteryPollingSettings settings = new(600, 300, 60, 60, 20);
+    DateTimeOffset lastActivity = DateTimeOffset.Now;
+    AdaptiveBatteryPollingState batteryState = new(
+        true,
+        80,
+        PowerSupplyStatus.POWER_SUPPLY_STATUS_DISCHARGING
+    );
+    Task waitTask = schedule.WaitUntilDueAsync(
+        () => lastActivity,
+        () => AdaptiveBatteryPollingPolicy.GetPollInterval(settings, batteryState),
+        CancellationToken.None
+    );
+
+    lastActivity = DateTimeOffset.Now.AddSeconds(-61);
+    batteryState = new AdaptiveBatteryPollingState(
+        true,
+        80,
+        PowerSupplyStatus.POWER_SUPPLY_STATUS_CHARGING
+    );
+    schedule.Reschedule();
+    await waitTask.WaitAsync(TimeSpan.FromSeconds(5));
+}
+
 static void TestMessagePipeDiagnosticsPolicy()
 {
 #if DEBUG
@@ -504,6 +693,20 @@ static void TestProductionTrayToolTipModeLifecycle()
     Assert(process.ExitCode == 0, $"The isolated WPF tooltip lifecycle process failed. Output: {output} Error: {error}");
 }
 
+static void InvokeNativeTrayDoubleClick(TaskbarIcon taskbarIcon)
+{
+    Type mouseEventType = typeof(TaskbarIcon).Assembly.GetType(
+        "Hardcodet.Wpf.TaskbarNotification.Interop.MouseEvent",
+        throwOnError: true
+    )!;
+    object doubleClickEvent = Enum.Parse(mouseEventType, "IconDoubleClick");
+    System.Reflection.MethodInfo onMouseEvent = typeof(TaskbarIcon).GetMethod(
+        "OnMouseEvent",
+        System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic
+    ) ?? throw new InvalidOperationException("Hardcodet TaskbarIcon.OnMouseEvent should be available for interaction testing.");
+    onMouseEvent.Invoke(taskbarIcon, [doubleClickEvent]);
+}
+
 static void TestProductionTrayToolTipModeLifecycleCore()
 {
     Exception? failure = null;
@@ -521,6 +724,31 @@ static void TestProductionTrayToolTipModeLifecycleCore()
                 Source = new Uri("/PowerTray;component/NotifyIconResources.xaml", UriKind.Relative),
             });
             ThemeService.ApplyCurrentResources();
+            ContextMenu sharedTrayMenu = (ContextMenu)application.FindResource("SysTrayMenu");
+            sharedTrayMenu.DataContext = null;
+            int settingsOpenCount = 0;
+            CommunityToolkit.Mvvm.Input.RelayCommand openSettingsCommand = new(
+                () => settingsOpenCount++
+            );
+            using MainTaskBarIcon mainIcon = new();
+            Assert(
+                mainIcon.DoubleClickCommand == null,
+                "The fallback tray icon should tolerate creation before the shared menu receives its view model."
+            );
+            sharedTrayMenu.DataContext = new { OpenSettingsCommand = openSettingsCommand };
+            BindingOperations.GetBindingExpression(
+                mainIcon,
+                TaskbarIcon.DoubleClickCommandProperty
+            )?.UpdateTarget();
+            Assert(
+                ReferenceEquals(mainIcon.DoubleClickCommand, openSettingsCommand),
+                "The fallback tray icon should acquire the settings command when the shared menu data context is assigned."
+            );
+            InvokeNativeTrayDoubleClick(mainIcon);
+            Assert(settingsOpenCount == 1, "Double-clicking the fallback tray icon should execute the settings command once.");
+            TrayIconSettingsInteraction.Detach(mainIcon);
+            Assert(mainIcon.DoubleClickCommand == null, "Fallback tray icon cleanup should detach the settings command.");
+            TrayIconSettingsInteraction.Attach(mainIcon);
             double ordinaryComboWidth = (double)application.Resources["UISettingsComboWidth"];
             double trayToolTipComboWidth = (double)application.Resources["UITrayToolTipModeComboWidth"];
             Assert(
@@ -582,6 +810,20 @@ static void TestProductionTrayToolTipModeLifecycleCore()
                     TaskbarIcon taskbarIcon = firstIcon.TaskbarIconForTesting;
                     TrayToolTipRegistration registration = firstIcon.ToolTipRegistrationForTesting;
                     ToolTip? resolvedCustomToolTip = null;
+                    BindingOperations.GetBindingExpression(
+                        taskbarIcon,
+                        TaskbarIcon.DoubleClickCommandProperty
+                    )?.UpdateTarget();
+                    Assert(
+                        ReferenceEquals(taskbarIcon.DoubleClickCommand, openSettingsCommand),
+                        $"Mode {mode} device icon should bind double-click to the shared settings command."
+                    );
+                    int previousSettingsOpenCount = settingsOpenCount;
+                    InvokeNativeTrayDoubleClick(taskbarIcon);
+                    Assert(
+                        settingsOpenCount == previousSettingsOpenCount + 1,
+                        $"Mode {mode} device icon double-click should execute the settings command once."
+                    );
 
                     switch (mode)
                     {
@@ -636,6 +878,7 @@ static void TestProductionTrayToolTipModeLifecycleCore()
 
                     device.MarkOffline();
                     Assert(device.TaskbarIconForTesting == null, $"Mode {mode} must remove the tray icon through the production OFFLINE path.");
+                    Assert(firstIcon.TaskbarIconForTesting.DoubleClickCommand == null, $"Mode {mode} must detach the settings command during icon disposal.");
                     if (resolvedCustomToolTip != null)
                     {
                         Assert(!resolvedCustomToolTip.IsOpen, "Custom tooltip must be closed before icon disposal.");
@@ -1092,11 +1335,20 @@ static void TestNativeSettingsValidation()
 {
     NativeDeviceManagerSettings defaults = new();
     Assert(defaults.PresencePeriod == 15, "Native presence checks should default to the safe 15-second minimum.");
+    Assert(defaults.PollPeriod == 600, "Full and fallback polling should default to ten minutes.");
+    Assert(defaults.DischargingPollPeriod == 300, "Discharging HID++ devices should default to a five-minute poll.");
+    Assert(defaults.ChargingPollPeriod == 60, "Charging HID++ devices should default to a one-minute poll.");
+    Assert(defaults.LowBatteryPollPeriod == 60, "Low-battery HID++ devices should default to a one-minute poll.");
+    Assert(defaults.LowBatteryPollThreshold == 20, "Low-battery fast polling should default to twenty percent.");
 
     NativeDeviceManagerSettings settings = new()
     {
         RetryTime = -1,
         PollPeriod = int.MaxValue,
+        DischargingPollPeriod = int.MaxValue,
+        ChargingPollPeriod = int.MaxValue,
+        LowBatteryPollPeriod = int.MaxValue,
+        LowBatteryPollThreshold = int.MaxValue,
         PresencePeriod = 1,
         ConsecutiveFailureThreshold = 99,
         DisabledDevices = ["", "  ", "g733", "G733"],
@@ -1104,6 +1356,10 @@ static void TestNativeSettingsValidation()
 
     Assert(settings.RetryTime == 1, "RetryTime should clamp to its minimum.");
     Assert(settings.PollPeriod == 86400, "PollPeriod should clamp to its maximum.");
+    Assert(settings.DischargingPollPeriod == 86400, "DischargingPollPeriod should clamp to its maximum.");
+    Assert(settings.ChargingPollPeriod == 86400, "ChargingPollPeriod should clamp to its maximum.");
+    Assert(settings.LowBatteryPollPeriod == 86400, "LowBatteryPollPeriod should clamp to its maximum.");
+    Assert(settings.LowBatteryPollThreshold == 100, "LowBatteryPollThreshold should clamp to its maximum.");
     Assert(settings.PresencePeriod == 15, "PresencePeriod should clamp to its minimum.");
     Assert(settings.ConsecutiveFailureThreshold == 10, "Failure threshold should clamp to its maximum.");
     Assert(settings.DisabledDevices.SequenceEqual(["g733"], StringComparer.OrdinalIgnoreCase), "Disabled device filters should ignore blanks and duplicates.");
@@ -1856,6 +2112,7 @@ TestXmlEscaping();
 TestLastUpdateDoesNotWriteDeviceMetadataToConsole();
 TestBattery1F20Decode();
 TestBattery1001LookupBoundaries();
+TestHidppBatteryNotificationDecode();
 TestHidDeviceInfoX64AbiLayout();
 TestNativeIdentityDiagnosticsRedaction();
 TestUpdaterAssetSelectionAndChecksum();
@@ -1866,6 +2123,8 @@ TestTrayToolTipModesAndSettingsMigration();
 TestNativeTrayToolTipLength();
 TestLocalizationCatalogs();
 await TestBatteryPollingLoopRecoversAfterUnexpectedFailureAsync();
+TestAdaptiveBatteryPollingPolicy();
+await TestAdaptiveBatteryPollScheduleReschedulesAsync();
 TestMessagePipeDiagnosticsPolicy();
 TestRestartWaitArgumentParsing();
 TestRestartWaitProcessHandle();
