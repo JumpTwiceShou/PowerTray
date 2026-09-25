@@ -27,7 +27,7 @@ using LGSTrayCore.HttpServer;
 
 namespace LGSTrayUI;
 
-public sealed partial class SettingsViewModel : ObservableObject
+public sealed partial class SettingsViewModel : ObservableObject, IDataErrorInfo
 {
     private readonly UserSettingsWrapper _settings;
     private readonly LogiDeviceCollection _deviceCollection;
@@ -45,6 +45,8 @@ public sealed partial class SettingsViewModel : ObservableObject
     private bool _isEditingDefaultThreshold;
     private bool _lastGHubRunning;
     private bool _lastPort9010Reachable;
+    private string _quietStartDraft;
+    private string _quietEndDraft;
 
     public LocalizationService Loc { get; }
     public ObservableCollection<DeviceSettingsItemViewModel> DeviceItems { get; } = [];
@@ -110,6 +112,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         Loc = loc;
         _uiScaleValue = CurrentUiScaleOption.Index;
         _defaultThresholdDraft = _settings.DefaultThresholdPercent;
+        _quietStartDraft = _settings.QuietHoursStart;
+        _quietEndDraft = _settings.QuietHoursEnd;
 
         _deviceCollection.Devices.CollectionChanged += OnDevicesChanged;
         _settings.DeviceSettingsChanged += OnDeviceSettingsChanged;
@@ -321,23 +325,39 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     public string QuietHoursStart
     {
-        get => _settings.QuietHoursStart;
+        get => _quietStartDraft;
         set
         {
-            _settings.QuietHoursStart = value;
-            RefreshBindings();
+            _quietStartDraft = value;
+            if (TimeOfDayInput.TryNormalize(value, out string normalized))
+                _settings.QuietHoursStart = _quietStartDraft = normalized;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(QuietHoursStartError));
         }
     }
 
     public string QuietHoursEnd
     {
-        get => _settings.QuietHoursEnd;
+        get => _quietEndDraft;
         set
         {
-            _settings.QuietHoursEnd = value;
-            RefreshBindings();
+            _quietEndDraft = value;
+            if (TimeOfDayInput.TryNormalize(value, out string normalized))
+                _settings.QuietHoursEnd = _quietEndDraft = normalized;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(QuietHoursEndError));
         }
     }
+
+    public string QuietHoursStartError => this[nameof(QuietHoursStart)];
+    public string QuietHoursEndError => this[nameof(QuietHoursEnd)];
+    public string Error => string.Empty;
+    public string this[string columnName] => columnName switch
+    {
+        nameof(QuietHoursStart) when !TimeOfDayInput.TryNormalize(QuietHoursStart, out _) => Loc["TimeValidationError"],
+        nameof(QuietHoursEnd) when !TimeOfDayInput.TryNormalize(QuietHoursEnd, out _) => Loc["TimeValidationError"],
+        _ => string.Empty,
+    };
 
     public bool SuppressNotificationsWhenFullscreen
     {
@@ -1070,6 +1090,26 @@ public sealed partial class DeviceSettingsItemViewModel : ObservableObject, IDis
             Refresh();
         }
     }
+
+    public bool FollowGlobalNotifications
+    {
+        get
+        {
+            DeviceAlertSettings settings = _settings.GetDeviceSettings(DeviceId);
+            return !settings.WindowsNotification.HasValue && !settings.TrayBlink.HasValue;
+        }
+        set
+        {
+            if (FollowGlobalNotifications == value) return;
+            bool notification = WindowsNotification;
+            bool blink = TrayBlink;
+            _settings.SetDeviceWindowsNotification(DeviceId, value ? null : notification);
+            _settings.SetDeviceTrayBlink(DeviceId, value ? null : blink);
+            Refresh();
+        }
+    }
+
+    public bool IsCustomNotifications => !FollowGlobalNotifications;
 
     public bool TrayBlink
     {

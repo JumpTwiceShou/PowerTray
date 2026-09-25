@@ -4,28 +4,44 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
-using System.Windows.Media.Animation;
+using System.Windows.Interop;
 
 namespace LGSTrayUI;
 
 public partial class SettingsWindow : Window
 {
-    private const int WindowResizeAnimationMilliseconds = 120;
     private SettingsViewModel? _viewModel;
+    private HwndSource? _source;
+    private Size? _lastPreferredSize;
 
     public SettingsWindow()
     {
         InitializeComponent();
-        SourceInitialized += (_, _) => ThemeWindowInterop.Apply(this);
+        SourceInitialized += (_, _) =>
+        {
+            ThemeWindowInterop.Apply(this);
+            _source = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
+            _source?.AddHook(OnWindowMessage);
+        };
         Loaded += (_, _) => ApplyWindowBounds(animate: false);
+        StateChanged += (_, _) => Dispatcher.BeginInvoke(() => SettingsWindowPlacement.Apply(this));
         DataContextChanged += OnDataContextChanged;
         CheckTheme.StaticPropertyChanged += OnThemeChanged;
         Closed += (_, _) =>
         {
             CheckTheme.StaticPropertyChanged -= OnThemeChanged;
+            _source?.RemoveHook(OnWindowMessage);
             SetViewModel(null);
         };
         UiScaleSlider.AddHandler(Thumb.DragCompletedEvent, new DragCompletedEventHandler(OnUiScaleDragCompleted));
+    }
+
+    private IntPtr OnWindowMessage(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        // Let WPF apply its DPI change before fitting the native window to the current monitor.
+        if (message is 0x02E0 or 0x007E or 0x001A or 0x0232)
+            Dispatcher.BeginInvoke(() => SettingsWindowPlacement.Apply(this));
+        return IntPtr.Zero;
     }
 
     private void OnThemeChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -223,39 +239,11 @@ public partial class SettingsWindow : Window
             return;
         }
 
-        MinWidth = _viewModel.WindowMinWidth;
-        MinHeight = _viewModel.WindowMinHeight;
-
-        double width = Math.Max(_viewModel.WindowWidth, MinWidth);
-        double height = Math.Max(_viewModel.WindowHeight, MinHeight);
-
-        if (!animate)
-        {
-            BeginAnimation(WidthProperty, null);
-            BeginAnimation(HeightProperty, null);
-            Width = width;
-            Height = height;
-            return;
-        }
-
-        AnimateDimension(WidthProperty, Width, width);
-        AnimateDimension(HeightProperty, Height, height);
-    }
-
-    private void AnimateDimension(DependencyProperty property, double from, double to)
-    {
-        if (Math.Abs(from - to) < 0.5)
-        {
-            SetValue(property, to);
-            return;
-        }
-
-        DoubleAnimation animation = new(from, to, TimeSpan.FromMilliseconds(WindowResizeAnimationMilliseconds))
-        {
-            EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut },
-            FillBehavior = FillBehavior.Stop,
-        };
-        animation.Completed += (_, _) => SetValue(property, to);
-        BeginAnimation(property, animation, HandoffBehavior.SnapshotAndReplace);
+        Size preferred = new(Math.Max(_viewModel.WindowWidth, _viewModel.WindowMinWidth),
+            Math.Max(_viewModel.WindowHeight, _viewModel.WindowMinHeight));
+        if (animate && _lastPreferredSize == preferred) return;
+        _lastPreferredSize = preferred;
+        SettingsWindowPlacement.Apply(this, preferred,
+            new Size(_viewModel.WindowMinWidth, _viewModel.WindowMinHeight));
     }
 }

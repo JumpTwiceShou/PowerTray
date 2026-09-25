@@ -21,6 +21,17 @@
             <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
         </Style>
 
+        <Style x:Key="TimeErrorTextStyle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource ErrorTextBrush}"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="FontSize" Value="{DynamicResource UICaptionFontSize}"/>
+            <Style.Triggers>
+                <Trigger Property="Text" Value="">
+                    <Setter Property="Visibility" Value="Collapsed"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
         <Style TargetType="Button">
             <Setter Property="MinHeight" Value="{DynamicResource UIButtonMinHeight}"/>
             <Setter Property="Padding" Value="14,7"/>
@@ -276,8 +287,13 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="CheckBox">
-                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <Grid VerticalAlignment="Center">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
                             <Border x:Name="Box"
+                                    Grid.Column="0"
                                     Width="19"
                                     Height="19"
                                     CornerRadius="6"
@@ -293,8 +309,8 @@
                                       StrokeEndLineCap="Round"
                                       Visibility="Collapsed"/>
                             </Border>
-                            <ContentPresenter VerticalAlignment="Center"/>
-                        </StackPanel>
+                            <ContentPresenter Grid.Column="1" VerticalAlignment="Center"/>
+                        </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsChecked" Value="True">
                                 <Setter TargetName="Box" Property="Background" Value="{DynamicResource AccentBrush}"/>
@@ -359,7 +375,7 @@
         <Style TargetType="Slider">
             <Setter Property="Height" Value="42"/>
             <Setter Property="MinWidth" Value="180"/>
-            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Focusable" Value="True"/>
             <Setter Property="ClipToBounds" Value="True"/>
             <Setter Property="Template">
                 <Setter.Value>
@@ -713,13 +729,16 @@
                                 <StackPanel Orientation="Horizontal">
                                     <StackPanel Width="120">
                                         <TextBlock Text="{Binding Loc[QuietStart]}"/>
-                                        <TextBox Text="{Binding QuietHoursStart, UpdateSourceTrigger=LostFocus}"/>
+                                        <TextBox Text="{Binding QuietHoursStart, UpdateSourceTrigger=LostFocus, ValidatesOnDataErrors=True}"/>
+                                        <TextBlock Text="{Binding QuietHoursStartError}" Style="{StaticResource TimeErrorTextStyle}"/>
                                     </StackPanel>
                                     <StackPanel Width="120">
                                         <TextBlock Text="{Binding Loc[QuietEnd]}"/>
-                                        <TextBox Text="{Binding QuietHoursEnd, UpdateSourceTrigger=LostFocus}"/>
+                                        <TextBox Text="{Binding QuietHoursEnd, UpdateSourceTrigger=LostFocus, ValidatesOnDataErrors=True}"/>
+                                        <TextBlock Text="{Binding QuietHoursEndError}" Style="{StaticResource TimeErrorTextStyle}"/>
                                     </StackPanel>
                                 </StackPanel>
+                                <TextBlock Text="{Binding Loc[QuietHoursHint]}" Foreground="{DynamicResource MutedTextBrush}" FontSize="{DynamicResource UICaptionFontSize}" TextWrapping="Wrap" Margin="0,6,0,0"/>
                             </StackPanel>
                         </Border>
                     </StackPanel>
@@ -745,27 +764,22 @@
                                 <DataTemplate>
                                     <Border Style="{StaticResource DevicePanelBorder}">
                                             <StackPanel>
-                                                <Grid HorizontalAlignment="Left" VerticalAlignment="Center" MinHeight="{DynamicResource UIButtonMinHeight}">
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="Auto"/>
-                                                        <ColumnDefinition Width="Auto"/>
-                                                        <ColumnDefinition Width="Auto"/>
-                                                    </Grid.ColumnDefinitions>
-                                                    <Border Grid.Column="0" Height="{DynamicResource UIButtonMinHeight}" VerticalAlignment="Center">
+                                                <WrapPanel VerticalAlignment="Center" MinHeight="{DynamicResource UIButtonMinHeight}">
+                                                    <Border Height="{DynamicResource UIButtonMinHeight}" VerticalAlignment="Center">
                                                         <TextBlock Text="{Binding DisplayName}" MaxWidth="{DynamicResource UIDeviceTitleMaxWidth}" FontSize="{DynamicResource UISectionTitleFontSize}" LineHeight="{DynamicResource UIDeviceTitleLineHeight}" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold" Foreground="{DynamicResource TextBrush}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
                                                     </Border>
-                                                    <Border Grid.Column="1" Style="{StaticResource MetaPill}" Padding="8,3" Margin="6,0,0,0" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="{Binding IsOffline, Converter={StaticResource BoolToVisibilityConverter}}">
+                                                    <Border Style="{StaticResource MetaPill}" Padding="8,3" Margin="6,0,0,0" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="{Binding IsOffline, Converter={StaticResource BoolToVisibilityConverter}}">
                                                         <TextBlock Text="{Binding Loc[Offline]}" Foreground="{DynamicResource MutedTextBrush}" FontSize="{DynamicResource UICaptionFontSize}" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center"/>
                                                     </Border>
-                                                    <Button Grid.Column="2"
+                                                    <Button
                                                             Content="{Binding Loc[RemoveHistory]}"
                                                             Command="{Binding RemoveHistoryCommand}"
                                                             Visibility="{Binding IsOffline, Converter={StaticResource BoolToVisibilityConverter}}"
                                                             Height="{DynamicResource UIButtonMinHeight}"
-                                                            Margin="18,0,0,0"
+                                                            Margin="8,0,0,0"
                                                             Padding="10,0"
                                                             VerticalAlignment="Center"/>
-                                                </Grid>
+                                                </WrapPanel>
                                             <TextBlock Visibility="{Binding ShowOriginalName, Converter={StaticResource BoolToVisibilityConverter}}"
                                                        Foreground="{DynamicResource MutedTextBrush}"
                                                        Margin="0,2,0,0">
@@ -851,17 +865,21 @@
                                                 <Grid.RowDefinitions>
                                                     <RowDefinition Height="Auto"/>
                                                     <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
                                                 </Grid.RowDefinitions>
                                                 <CheckBox Grid.Row="0" Grid.Column="0" IsChecked="{Binding FollowGlobalNumericDisplay}" Width="{DynamicResource UIDeviceOptionColumnWidth}" VerticalAlignment="Top">
                                                     <TextBlock Text="{Binding Loc[FollowGlobalNumericIcon]}" TextWrapping="Wrap"/>
                                                 </CheckBox>
-                                                <CheckBox Grid.Row="0" Grid.Column="2" IsChecked="{Binding WindowsNotification}" Width="{DynamicResource UIDeviceOptionColumnWidth}" VerticalAlignment="Top">
+                                                <CheckBox Grid.Row="0" Grid.Column="2" IsChecked="{Binding FollowGlobalNotifications}" Width="{DynamicResource UIDeviceOptionColumnWidth}" VerticalAlignment="Top">
+                                                    <TextBlock Text="{Binding Loc[FollowGlobalNotifications]}" TextWrapping="Wrap"/>
+                                                </CheckBox>
+                                                <CheckBox Grid.Row="1" Grid.Column="2" IsChecked="{Binding WindowsNotification}" IsEnabled="{Binding IsCustomNotifications}" Width="{DynamicResource UIDeviceOptionColumnWidth}" VerticalAlignment="Top">
                                                     <TextBlock Text="{Binding Loc[WindowsNotification]}" TextWrapping="Wrap"/>
                                                 </CheckBox>
                                                 <CheckBox Grid.Row="1" Grid.Column="0" IsChecked="{Binding NumericDisplay}" IsEnabled="{Binding IsCustomNumericDisplay}" Width="{DynamicResource UIDeviceOptionColumnWidth}" VerticalAlignment="Top">
                                                     <TextBlock Text="{Binding Loc[NumericIcon]}" TextWrapping="Wrap"/>
                                                 </CheckBox>
-                                                <CheckBox Grid.Row="1" Grid.Column="2" IsChecked="{Binding TrayBlink}" Width="{DynamicResource UIDeviceOptionColumnWidth}" VerticalAlignment="Top">
+                                                <CheckBox Grid.Row="2" Grid.Column="2" IsChecked="{Binding TrayBlink}" IsEnabled="{Binding IsCustomNotifications}" Width="{DynamicResource UIDeviceOptionColumnWidth}" VerticalAlignment="Top">
                                                     <TextBlock Text="{Binding Loc[TrayBlink]}" TextWrapping="Wrap"/>
                                                 </CheckBox>
                                             </Grid>

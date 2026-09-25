@@ -2108,6 +2108,12 @@ if (args.Contains("--restart-wait-child", StringComparer.Ordinal))
     return;
 }
 
+if (args.Contains("--ui-152", StringComparer.Ordinal))
+{
+    Ui152Tests.Run();
+    return;
+}
+
 TestXmlEscaping();
 TestLastUpdateDoesNotWriteDeviceMetadataToConsole();
 TestBattery1F20Decode();

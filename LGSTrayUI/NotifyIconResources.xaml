@@ -256,7 +256,7 @@
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
                     <TextBlock Text="&#x2713;" FontWeight="Bold" Foreground="{DynamicResource TrayMenuResolvedAccentBrush}" Visibility="{Binding MenuNumericDisplay, Converter={StaticResource BoolToVisibilityConverter}}"/>
-                    <TextBlock Grid.Column="1" Text="{Binding Loc[MenuNumericIcon]}" Foreground="{DynamicResource TrayMenuResolvedForegroundBrush}"/>
+                    <TextBlock Grid.Column="1" Text="{Binding MenuNumericDisplayLabel}" Foreground="{DynamicResource TrayMenuResolvedForegroundBrush}"/>
                 </Grid>
             </MenuItem.Header>
         </MenuItem>

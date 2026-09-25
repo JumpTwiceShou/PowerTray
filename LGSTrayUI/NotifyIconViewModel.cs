@@ -61,6 +61,10 @@ namespace LGSTrayUI
             ? _userSettings.GetDeviceNumericDisplay(device.DeviceId)
             : _userSettings.NumericDisplay;
 
+        public string MenuNumericDisplayLabel => _menuDevice == null
+            ? _loc["MenuNumericIconGlobal"]
+            : _loc["MenuNumericIconDevice"];
+
         public static string AssemblyVersion
         {
             get
@@ -109,6 +113,7 @@ namespace LGSTrayUI
             _userSettings = userSettings;
             _deviceManagers = deviceManagers;
             _loc = loc;
+            _loc.PropertyChanged += (_, _) => OnPropertyChanged(nameof(MenuNumericDisplayLabel));
             _settingsWindowFactory = settingsWindowFactory;
             _alertManager = alertManager;
             _updateService = updateService;
@@ -140,14 +145,17 @@ namespace LGSTrayUI
         [RelayCommand]
         private void ToggleNumericDisplay()
         {
-            if (_menuDevice is { } device && _userSettings.HasDeviceNumericDisplayOverride(device.DeviceId))
-            {
-                _userSettings.SetDeviceNumericDisplayOverride(device.DeviceId, !_userSettings.GetDeviceNumericDisplay(device.DeviceId));
-                OnPropertyChanged(nameof(MenuNumericDisplay));
-                return;
-            }
+            ToggleNumericDisplaySetting(_userSettings, _menuDevice?.DeviceId);
+            OnPropertyChanged(nameof(NumericDisplay));
+            OnPropertyChanged(nameof(MenuNumericDisplay));
+        }
 
-            NumericDisplay = !NumericDisplay;
+        internal static void ToggleNumericDisplaySetting(UserSettingsWrapper settings, string? deviceId)
+        {
+            if (deviceId != null)
+                settings.SetDeviceNumericDisplayOverride(deviceId, !settings.GetDeviceNumericDisplay(deviceId));
+            else
+                settings.NumericDisplay = !settings.NumericDisplay;
         }
 
         [RelayCommand]
@@ -235,6 +243,7 @@ namespace LGSTrayUI
         {
             _menuDevice = device;
             OnPropertyChanged(nameof(MenuNumericDisplay));
+            OnPropertyChanged(nameof(MenuNumericDisplayLabel));
         }
 
         private void UserSettingsPropertyChanged(object? sender, PropertyChangedEventArgs e)

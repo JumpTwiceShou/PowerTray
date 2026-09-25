@@ -85,21 +85,34 @@ public static partial class BatteryIconDrawing
 
     public static void DrawNumeric(TaskbarIcon taskbarIcon, LogiDevice device)
     {
-        using Bitmap bitmap = new(ImageSize, ImageSize);
+        using Bitmap bitmap = CreateNumericBitmap(device, ImageSize);
+        ReplaceIcon(taskbarIcon, CreateManagedIcon(bitmap));
+    }
+
+    internal static Bitmap CreateNumericBitmap(LogiDevice device, int size)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(size, 16);
+        Bitmap bitmap = new(size, size);
         using Graphics graphics = Graphics.FromImage(bitmap);
         ConfigureGraphics(graphics, SmoothingMode.HighQuality);
-
         string displayString = device.BatteryPercentage < 0 ? "?" : $"{device.BatteryPercentage:f0}";
-        using Font font = new("Segoe UI", (int)(0.8 * ImageSize), GraphicsUnit.Pixel);
+        using FontFamily family = new("Segoe UI");
+        using GraphicsPath glyphs = new();
+        glyphs.AddString(displayString, family, (int)FontStyle.Regular, size * 0.8f,
+            PointF.Empty, StringFormat.GenericTypographic);
+        RectangleF bounds = glyphs.GetBounds();
+        float padding = Math.Max(1.5f, size / 16f);
+        float scale = Math.Min(1f, Math.Min((size - 2 * padding) / bounds.Width,
+            (size - 2 * padding) / bounds.Height));
+        using Matrix transform = new();
+        transform.Translate(-bounds.Left, -bounds.Top);
+        transform.Scale(scale, scale, MatrixOrder.Append);
+        transform.Translate((size - bounds.Width * scale) / 2f,
+            (size - bounds.Height * scale) / 2f, MatrixOrder.Append);
+        glyphs.Transform(transform);
         using SolidBrush brush = new(GetDeviceColor(device));
-        using StringFormat format = new(StringFormatFlags.FitBlackBox)
-        {
-            LineAlignment = StringAlignment.Center,
-            Alignment = StringAlignment.Center,
-        };
-        graphics.DrawString(displayString, font, brush, ImageSize / 2f, ImageSize / 2f, format);
-
-        ReplaceIcon(taskbarIcon, CreateManagedIcon(bitmap));
+        graphics.FillPath(brush, glyphs);
+        return bitmap;
     }
 
     public static void DrawAlert(TaskbarIcon taskbarIcon, LogiDevice device)

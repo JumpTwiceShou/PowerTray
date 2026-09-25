@@ -94,6 +94,7 @@ public sealed class ThemeService
         Set(resources, "TextBrush", light ? "#111827" : "#F3F4F6");
         Set(resources, "MutedTextBrush", light ? "#5B6472" : "#A7AFBC");
         Set(resources, "DisabledTextBrush", light ? "#9CA3AF" : "#6F7785");
+        Set(resources, "ErrorTextBrush", light ? "#B42318" : "#FF8F85");
         Set(resources, "ButtonBackgroundBrush", light ? "#EEF2FF" : "#1E2C44");
         Set(resources, "ButtonHoverBrush", light ? "#DBEAFE" : "#263A5C");
         Set(resources, "ButtonPressedBrush", light ? "#BFDBFE" : "#314E7D");
