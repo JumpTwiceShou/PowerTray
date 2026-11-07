@@ -2249,7 +2249,10 @@ namespace LGSTrayHID
 
         private async Task<byte[]?> ReadCenturionInnerAsync(int timeout)
         {
-            using CancellationTokenSource cts = new(timeout);
+            CancellationToken lifetimeToken = _lifetimeCts.Token;
+            lifetimeToken.ThrowIfCancellationRequested();
+            using CancellationTokenSource cts = CancellationTokenSource.CreateLinkedTokenSource(lifetimeToken);
+            cts.CancelAfter(timeout);
             while (!cts.IsCancellationRequested)
             {
                 try
@@ -2273,16 +2276,15 @@ namespace LGSTrayHID
 
                     return payload;
                 }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
-                catch (ChannelClosedException)
+                catch (OperationCanceledException) when (!lifetimeToken.IsCancellationRequested)
                 {
                     break;
                 }
             }
 
+            // Only an ordinary read timeout is retryable. Lifecycle cancellation and
+            // channel closure must escape all enclosing request/probe loops.
+            lifetimeToken.ThrowIfCancellationRequested();
             return null;
         }
 

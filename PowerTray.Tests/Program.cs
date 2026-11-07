@@ -2108,6 +2108,48 @@ if (args.Contains("--restart-wait-child", StringComparer.Ordinal))
     return;
 }
 
+if (args.Contains("--ipc-transport", StringComparer.Ordinal))
+{
+    await NamedPipeTransportTests.RunAsync();
+    return;
+}
+
+if (args.Contains("--diagnostics-unconfigured-child", StringComparer.Ordinal))
+{
+    await FourReviewRegressionTests.TestUnconfiguredDiagnosticsAsync();
+    return;
+}
+
+if (args.Contains("--review-regressions", StringComparer.Ordinal))
+{
+    await FourReviewRegressionTests.RunAsync();
+    return;
+}
+
+if (args.Contains("--congested-alert-cycle-child", StringComparer.Ordinal))
+{
+    await CongestedAlertCycleTests.RunChildAsync();
+    return;
+}
+
+if (args.Contains("--congested-alert-cycle", StringComparer.Ordinal))
+{
+    await CongestedAlertCycleTests.RunAsync();
+    return;
+}
+
+if (args.Contains("--centurion-shutdown", StringComparer.Ordinal))
+{
+    await CenturionShutdownTests.RunAsync();
+    return;
+}
+
+if (args.Contains("--ipc-deadlines", StringComparer.Ordinal))
+{
+    await IpcRequestDeadlineTests.RunAsync();
+    return;
+}
+
 if (args.Contains("--ui-152", StringComparer.Ordinal))
 {
     Ui152Tests.Run();
@@ -2158,7 +2200,12 @@ TestCenturionReadOnlyDeviceInfoDecode();
 TestCenturionEndpointCandidatePolicy();
 TestDiagnosticsPrivacyScope();
 await TestDirectionalNamedPipeIpcAsync();
+await NamedPipeTransportTests.RunAsync();
+await CenturionShutdownTests.RunAsync();
+await IpcRequestDeadlineTests.RunAsync();
 TestIpcSessionAuthentication();
+await FourReviewRegressionTests.RunAsync();
+await CongestedAlertCycleTests.RunAsync();
 await TestUpdaterDetachedSignatureVerificationAsync();
 await TestUpdaterFileHashVerificationAsync();
 TestUpdaterTrustedHosts();

@@ -13,6 +13,8 @@ public sealed class NativeDiagnosticsClient : IDisposable
     private readonly IDistributedSubscriber<IPCMessageType, IPCMessage> _subscriber;
     private readonly IDistributedPublisher<IPCMessageRequestType, IPCRequestMessage> _publisher;
     private readonly SemaphoreSlim _subscriptionLock = new(1, 1);
+    private readonly object _subscriptionSync = new();
+    private readonly CancellationTokenSource _lifetimeCts = new();
     private readonly ConcurrentDictionary<string, TaskCompletionSource<NativeDiagnosticsResponseMessage>> _pending = new();
 
     private IAsyncDisposable? _subscription;
@@ -27,28 +29,44 @@ public sealed class NativeDiagnosticsClient : IDisposable
         _publisher = publisher;
     }
 
-    public async Task<NativeDiagnosticsResponseMessage?> RequestAsync(TimeSpan timeout)
+    public async Task<NativeDiagnosticsResponseMessage?> RequestAsync(TimeSpan timeout, CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        await EnsureSubscribedAsync();
-
-        string requestId = Guid.NewGuid().ToString("N");
-        TaskCompletionSource<NativeDiagnosticsResponseMessage> completion =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (!_pending.TryAdd(requestId, completion))
+        cancellationToken.ThrowIfCancellationRequested();
+        // G Hub-only mode never creates a native IPC session. Export the UI
+        // diagnostics without attempting an authenticated native request.
+        if (!IpcSessionContext.IsConfigured)
         {
             return null;
         }
-
+        using CancellationTokenSource deadline = new(timeout);
+        using CancellationTokenSource operation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken, _lifetimeCts.Token, deadline.Token);
+        string requestId = Guid.NewGuid().ToString("N");
         try
         {
+            await EnsureSubscribedAsync(operation.Token);
+            operation.Token.ThrowIfCancellationRequested();
+            TaskCompletionSource<NativeDiagnosticsResponseMessage> completion =
+                new(TaskCreationOptions.RunContinuationsAsynchronously);
+            if (!_pending.TryAdd(requestId, completion))
+            {
+                return null;
+            }
+
             NativeDiagnosticsRequestMessage request = new(requestId);
             IpcSessionContext.Sign(IPCMessageRequestType.NATIVE_DIAGNOSTICS_REQUEST, request);
             await _publisher.PublishAsync(
                 IPCMessageRequestType.NATIVE_DIAGNOSTICS_REQUEST,
-                request
+                request,
+                operation.Token
             );
-            return await completion.Task.WaitAsync(timeout);
+            return await completion.Task.WaitAsync(operation.Token);
+        }
+        catch (OperationCanceledException) when (
+            deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested && !_lifetimeCts.IsCancellationRequested)
+        {
+            return null;
         }
         catch (TimeoutException)
         {
@@ -62,38 +80,54 @@ public sealed class NativeDiagnosticsClient : IDisposable
 
     public void Dispose()
     {
-        if (_disposed)
+        IAsyncDisposable? subscription;
+        lock (_subscriptionSync)
         {
-            return;
+            if (_disposed)
+            {
+                return;
+            }
+            _disposed = true;
+            subscription = _subscription;
+            _subscription = null;
         }
 
-        _disposed = true;
+        _lifetimeCts.Cancel();
         foreach (TaskCompletionSource<NativeDiagnosticsResponseMessage> completion in _pending.Values)
         {
             completion.TrySetCanceled();
         }
         _pending.Clear();
-        _subscription?.DisposeAsync().AsTask().GetAwaiter().GetResult();
-        _subscription = null;
-        _subscriptionLock.Dispose();
+        subscription?.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        _lifetimeCts.Dispose();
+        // In-flight subscription setup still owns/releases this semaphore after
+        // cancellation. It has no wait handle and can be reclaimed with the client.
     }
 
-    private async Task EnsureSubscribedAsync()
+    private async Task EnsureSubscribedAsync(CancellationToken cancellationToken)
     {
-        if (_subscription != null)
+        lock (_subscriptionSync)
         {
-            return;
-        }
-
-        await _subscriptionLock.WaitAsync();
-        try
-        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
             if (_subscription != null)
             {
                 return;
             }
+        }
 
-            _subscription = await _subscriber.SubscribeAsync(
+        await _subscriptionLock.WaitAsync(cancellationToken);
+        try
+        {
+            lock (_subscriptionSync)
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                if (_subscription != null)
+                {
+                    return;
+                }
+            }
+
+            IAsyncDisposable subscription = await _subscriber.SubscribeAsync(
                 IPCMessageType.NATIVE_DIAGNOSTICS_RESPONSE,
                 message =>
                 {
@@ -108,8 +142,18 @@ public sealed class NativeDiagnosticsClient : IDisposable
                         completion.TrySetResult(response);
                     }
                 },
-                CancellationToken.None
+                cancellationToken
             );
+            lock (_subscriptionSync)
+            {
+                if (!_disposed)
+                {
+                    _subscription = subscription;
+                    return;
+                }
+            }
+            await subscription.DisposeAsync();
+            throw new ObjectDisposedException(nameof(NativeDiagnosticsClient));
         }
         finally
         {

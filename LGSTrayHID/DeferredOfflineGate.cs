@@ -72,53 +72,62 @@ internal sealed class DeferredOfflineGate : IDisposable
             }
 
             _deferredOfflineSignals[offlineMessage.deviceId] = cts;
+
+            // Register before cancellation/shutdown can snapshot the pending work.
+            Task pendingTask = Task.Run(() => EmitAfterDelayAsync(offlineMessage, emitOffline, delay, cts));
+            _pendingTasks.Add(pendingTask);
+            _ = pendingTask.ContinueWith(completed =>
+            {
+                lock (_sync)
+                {
+                    _pendingTasks.Remove(completed);
+                }
+            }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
         }
 
         _addDiagnosticEvent?.Invoke(
             $"Deferred offline for device hash={_hashDeviceIdForDiagnostics(offlineMessage.deviceId)}"
         );
 
-        Task pendingTask = Task.Run(async () =>
-        {
-            try
-            {
-                await Task.Delay(delay, cts.Token);
-                lock (_sync)
-                {
-                    if (!_deferredOfflineSignals.TryGetValue(offlineMessage.deviceId, out CancellationTokenSource? currentCts)
-                        || !ReferenceEquals(currentCts, cts))
-                    {
-                        return;
-                    }
+        return true;
+    }
 
-                    _deferredOfflineSignals.Remove(offlineMessage.deviceId);
+    private async Task EmitAfterDelayAsync(
+        DeviceOfflineMessage offlineMessage,
+        Action<DeviceOfflineMessage> emitOffline,
+        TimeSpan delay,
+        CancellationTokenSource cts)
+    {
+        try
+        {
+            await Task.Delay(delay, cts.Token);
+            lock (_sync)
+            {
+                if (!_deferredOfflineSignals.TryGetValue(offlineMessage.deviceId, out CancellationTokenSource? currentCts)
+                    || !ReferenceEquals(currentCts, cts))
+                {
+                    return;
                 }
 
-                emitOffline(offlineMessage);
+                _deferredOfflineSignals.Remove(offlineMessage.deviceId);
             }
-            catch (OperationCanceledException) { }
-            catch (Exception ex)
-            {
-                _addDiagnosticEvent?.Invoke($"Deferred offline callback failed: {ex.GetType().Name}: {ex.Message}");
-            }
-            finally
+
+            emitOffline(offlineMessage);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            _addDiagnosticEvent?.Invoke($"Deferred offline callback failed: {ex.GetType().Name}: {ex.Message}");
+        }
+        finally
+        {
+            // Cancel and Dispose must share ownership even after removal
+            // from the dictionary (CancelAll can still hold this source).
+            lock (_sync)
             {
                 cts.Dispose();
             }
-        });
-        lock (_sync)
-        {
-            _pendingTasks.Add(pendingTask);
         }
-        _ = pendingTask.ContinueWith(completed =>
-        {
-            lock (_sync)
-            {
-                _pendingTasks.Remove(completed);
-            }
-        }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
-
-        return true;
     }
 
     public bool Cancel(string deviceId)
@@ -128,21 +137,14 @@ internal sealed class DeferredOfflineGate : IDisposable
             return false;
         }
 
-        CancellationTokenSource? cts = null;
         lock (_sync)
         {
-            if (_deferredOfflineSignals.Remove(deviceId, out CancellationTokenSource? existingCts))
+            if (!_deferredOfflineSignals.Remove(deviceId, out CancellationTokenSource? cts))
             {
-                cts = existingCts;
+                return false;
             }
+            cts.Cancel();
         }
-
-        if (cts == null)
-        {
-            return false;
-        }
-
-        cts.Cancel();
         _addDiagnosticEvent?.Invoke(
             $"Cancelled deferred offline for device hash={_hashDeviceIdForDiagnostics(deviceId)}"
         );
@@ -151,17 +153,15 @@ internal sealed class DeferredOfflineGate : IDisposable
 
     public void CancelAll()
     {
-        CancellationTokenSource[] deferredSignals;
         lock (_sync)
         {
-            deferredSignals = [.. _deferredOfflineSignals.Values];
+            CancellationTokenSource[] deferredSignals = [.. _deferredOfflineSignals.Values];
             _deferredOfflineSignals.Clear();
             _deferOfflineUntil = DateTimeOffset.MinValue;
-        }
-
-        foreach (CancellationTokenSource cts in deferredSignals)
-        {
-            cts.Cancel();
+            foreach (CancellationTokenSource cts in deferredSignals)
+            {
+                cts.Cancel();
+            }
         }
     }
 

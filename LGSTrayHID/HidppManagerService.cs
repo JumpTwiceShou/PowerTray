@@ -10,6 +10,8 @@ public sealed class HidppManagerService : IHostedService, IAsyncDisposable
     private readonly IDistributedPublisher<IPCMessageType, IPCMessage> _publisher;
     private readonly IDistributedSubscriber<IPCMessageRequestType, IPCRequestMessage> _requestSubscriber;
     private readonly CancellationTokenSource _serviceCts = new();
+    private readonly CancellationToken _serviceToken;
+    private readonly DeviceEventOutbox _deviceEvents;
     private readonly DateTimeOffset _startedAt = DateTimeOffset.UtcNow;
     private readonly object _taskSync = new();
     private readonly List<IAsyncDisposable> _subscriptions = [];
@@ -25,6 +27,8 @@ public sealed class HidppManagerService : IHostedService, IAsyncDisposable
     {
         _publisher = publisher;
         _requestSubscriber = requestSubscriber;
+        _serviceToken = _serviceCts.Token;
+        _deviceEvents = new(PublishAuthenticatedAsync, _serviceToken);
         HidppManagerContext.Instance.HidppDeviceEvent += OnHidppDeviceEvent;
     }
 
@@ -55,7 +59,7 @@ public sealed class HidppManagerService : IHostedService, IAsyncDisposable
             cancellationToken
         ));
 
-        _heartbeatTask = Task.Run(() => RunHeartbeatLoopAsync(_serviceCts.Token), CancellationToken.None);
+        _heartbeatTask = Task.Run(() => RunHeartbeatLoopAsync(_serviceToken), CancellationToken.None);
         HidppManagerContext.Instance.Start(cancellationToken);
     }
 
@@ -68,6 +72,7 @@ public sealed class HidppManagerService : IHostedService, IAsyncDisposable
 
         _serviceCts.Cancel();
         HidppManagerContext.Instance.HidppDeviceEvent -= OnHidppDeviceEvent;
+        await WaitTaskAsync(_deviceEvents.Completion, cancellationToken);
 
         foreach (IAsyncDisposable subscription in _subscriptions)
         {
@@ -124,7 +129,12 @@ public sealed class HidppManagerService : IHostedService, IAsyncDisposable
 
     private void OnHidppDeviceEvent(IPCMessageType type, IPCMessage message)
     {
-        TrackRequestTask(PublishAuthenticatedAsync(type, message), $"publish {type}");
+        if (Volatile.Read(ref _stopped) != 0) return;
+        try
+        {
+            _deviceEvents.Enqueue(type, message);
+        }
+        catch (OperationCanceledException) when (_serviceToken.IsCancellationRequested) { }
     }
 
     private void TrackRequestTask(Task task, string context)
@@ -244,7 +254,7 @@ public sealed class HidppManagerService : IHostedService, IAsyncDisposable
             return;
         }
 
-        await HidppManagerContext.Instance.ProbePresenceAsync(_serviceCts.Token);
+        await HidppManagerContext.Instance.ProbePresenceAsync(_serviceToken);
     }
 
     private Task PublishDiagnosticsSnapshotAsync(string requestId)
@@ -265,8 +275,11 @@ public sealed class HidppManagerService : IHostedService, IAsyncDisposable
         CancellationToken cancellationToken = default
     )
     {
+        using CancellationTokenSource operation = CancellationTokenSource.CreateLinkedTokenSource(
+            _serviceToken, cancellationToken);
+        operation.Token.ThrowIfCancellationRequested();
         IpcSessionContext.Sign(type, message);
-        await _publisher.PublishAsync(type, message, cancellationToken);
+        await _publisher.PublishAsync(type, message, operation.Token);
     }
 
     private static async Task WaitTaskAsync(Task? task, CancellationToken cancellationToken)

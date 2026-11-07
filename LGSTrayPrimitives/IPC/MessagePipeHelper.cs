@@ -39,19 +39,27 @@ public static class MessagePipeHelper
             provider.GetRequiredService<HidMessagePipeEndpoints>().RequestSubscriber);
     }
 
-    private static ServiceProvider BuildEndpoint(string pipeName, bool hostAsServer)
+    private static ServiceProvider BuildEndpoint<TKey, TMessage>(string pipeName, bool hostAsServer) where TKey : notnull
     {
         ServiceCollection services = new();
         services.AddMessagePipe(options =>
         {
             options.EnableCaptureStackTrace = MessagePipeDiagnosticsPolicy.CaptureStackTrace;
-        })
-        .AddNamedPipeInterprocess(pipeName, config =>
-        {
-            config.HostAsServer = hostAsServer;
         });
+        if (hostAsServer)
+        {
+            services.AddSingleton<IDistributedSubscriber<TKey, TMessage>, InMemoryDistributedSubscriber<TKey, TMessage>>();
+            services.AddSingleton(provider => new NamedPipeReceiver<TKey, TMessage>(
+                pipeName, provider.GetRequiredService<IAsyncPublisher<TKey, TMessage>>()));
+        }
+        else
+        {
+            services.AddSingleton<IDistributedPublisher<TKey, TMessage>>(_ => new NamedPipePublisher<TKey, TMessage>(pipeName));
+        }
 
-        return services.BuildServiceProvider();
+        ServiceProvider provider = services.BuildServiceProvider();
+        if (hostAsServer) _ = provider.GetRequiredService<NamedPipeReceiver<TKey, TMessage>>();
+        return provider;
     }
 
     private sealed class UiMessagePipeEndpoints : IDisposable
@@ -64,17 +72,16 @@ public static class MessagePipeHelper
 
         public UiMessagePipeEndpoints()
         {
-            _messageServer = BuildEndpoint(IpcNameScope.MessagePipeName("PowerTray.HidToUi"), hostAsServer: true);
-            _requestClient = BuildEndpoint(IpcNameScope.MessagePipeName("PowerTray.UiToHid"), hostAsServer: false);
+            _messageServer = BuildEndpoint<IPCMessageType, IPCMessage>(IpcNameScope.MessagePipeName("PowerTray.HidToUi"), hostAsServer: true);
+            _requestClient = BuildEndpoint<IPCMessageRequestType, IPCRequestMessage>(IpcNameScope.MessagePipeName("PowerTray.UiToHid"), hostAsServer: false);
             MessageSubscriber = _messageServer.GetRequiredService<IDistributedSubscriber<IPCMessageType, IPCMessage>>();
             RequestPublisher = _requestClient.GetRequiredService<IDistributedPublisher<IPCMessageRequestType, IPCRequestMessage>>();
         }
 
         public void Dispose()
         {
-            // MessagePipe 1.8.2 disposes its CancellationTokenSource before its async-void
-            // named-pipe receive loop has necessarily observed cancellation. Process lifetime
-            // owns these endpoints, so let process teardown release the pipe handles safely.
+            try { _requestClient.Dispose(); }
+            finally { _messageServer.Dispose(); }
         }
     }
 
@@ -88,16 +95,16 @@ public static class MessagePipeHelper
 
         public HidMessagePipeEndpoints()
         {
-            _messageClient = BuildEndpoint(IpcNameScope.MessagePipeName("PowerTray.HidToUi"), hostAsServer: false);
-            _requestServer = BuildEndpoint(IpcNameScope.MessagePipeName("PowerTray.UiToHid"), hostAsServer: true);
+            _messageClient = BuildEndpoint<IPCMessageType, IPCMessage>(IpcNameScope.MessagePipeName("PowerTray.HidToUi"), hostAsServer: false);
+            _requestServer = BuildEndpoint<IPCMessageRequestType, IPCRequestMessage>(IpcNameScope.MessagePipeName("PowerTray.UiToHid"), hostAsServer: true);
             MessagePublisher = _messageClient.GetRequiredService<IDistributedPublisher<IPCMessageType, IPCMessage>>();
             RequestSubscriber = _requestServer.GetRequiredService<IDistributedSubscriber<IPCMessageRequestType, IPCRequestMessage>>();
         }
 
         public void Dispose()
         {
-            // See UiMessagePipeEndpoints.Dispose. The helper process owns these endpoints
-            // for its entire lifetime, so explicit worker disposal adds shutdown risk only.
+            try { _messageClient.Dispose(); }
+            finally { _requestServer.Dispose(); }
         }
     }
 }

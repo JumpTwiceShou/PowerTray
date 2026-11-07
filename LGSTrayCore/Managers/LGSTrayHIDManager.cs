@@ -99,6 +99,11 @@ public sealed class LGSTrayHIDManager : IDeviceManager, IHostedService, IDisposa
 
     public async Task RediscoverDevicesAsync(CancellationToken cancellationToken)
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        using CancellationTokenSource deadline = new(TimeSpan.FromSeconds(15));
+        using CancellationTokenSource operation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken, _cts.Token, deadline.Token);
+        operation.Token.ThrowIfCancellationRequested();
         string requestId = Guid.NewGuid().ToString("N");
         TaskCompletionSource<NativeRediscoverResponseMessage> completion =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -114,17 +119,22 @@ public sealed class LGSTrayHIDManager : IDeviceManager, IHostedService, IDisposa
             await _requestPublisher.PublishAsync(
                 IPCMessageRequestType.NATIVE_REDISCOVER_REQUEST,
                 request,
-                cancellationToken
+                operation.Token
             );
 
             NativeRediscoverResponseMessage response = await completion.Task.WaitAsync(
-                TimeSpan.FromSeconds(15),
-                cancellationToken
+                operation.Token
             );
             if (!string.IsNullOrWhiteSpace(response.error))
             {
                 throw new InvalidOperationException($"PowerTrayHID rediscover failed: {response.error}");
             }
+        }
+        catch (OperationCanceledException ex) when (
+            deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested && !_cts.IsCancellationRequested)
+        {
+            CancelDaemon();
+            throw new TimeoutException("PowerTrayHID rediscover timed out.", ex);
         }
         catch (TimeoutException)
         {
@@ -139,6 +149,7 @@ public sealed class LGSTrayHIDManager : IDeviceManager, IHostedService, IDisposa
 
     public async Task CheckHealthAsync(CancellationToken cancellationToken)
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
         NativeBackendStatusSnapshot snapshot = _status.Snapshot;
         bool heartbeatExpired = snapshot.LastHeartbeatAt.HasValue &&
@@ -152,6 +163,10 @@ public sealed class LGSTrayHIDManager : IDeviceManager, IHostedService, IDisposa
             return;
         }
 
+        // A stuck request pipe must not block the presence loop indefinitely.
+        using CancellationTokenSource deadline = new(TimeSpan.FromSeconds(2));
+        using CancellationTokenSource operation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken, _cts.Token, deadline.Token);
         try
         {
             NativeHealthCheckRequestMessage request = new(Guid.NewGuid().ToString("N"));
@@ -159,8 +174,14 @@ public sealed class LGSTrayHIDManager : IDeviceManager, IHostedService, IDisposa
             await _requestPublisher.PublishAsync(
                 IPCMessageRequestType.NATIVE_HEALTH_CHECK_REQUEST,
                 request,
-                cancellationToken
+                operation.Token
             );
+        }
+        catch (OperationCanceledException) when (
+            deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested && !_cts.IsCancellationRequested)
+        {
+            Debug.WriteLine("PowerTrayHID health request timed out; restarting helper.");
+            CancelDaemon();
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
