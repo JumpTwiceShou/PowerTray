@@ -22,23 +22,23 @@
       },
       "MessagePack": {
         "type": "Transitive",
-        "resolved": "3.1.7",
-        "contentHash": "gXpifaxbhfBqh8bVToQn9j+OgCnhXWMbRCV7RQIbCVa9CNJG1fY6oHAYYl+ER3Tb9uUIHiQ5QbGiGwwFhoagbA==",
+        "resolved": "3.1.9",
+        "contentHash": "9IuUiOycxveb2R4RER5yQl7qYHMeRRMghOFuI/c+A8aX8j0zEzJ9QJD0u3Sr3MrNewUUkqOcTVLW9Zn6odZyIQ==",
         "dependencies": {
-          "MessagePack.Annotations": "3.1.7",
-          "MessagePackAnalyzer": "3.1.7",
+          "MessagePack.Annotations": "3.1.9",
+          "MessagePackAnalyzer": "3.1.9",
           "Microsoft.NET.StringTools": "17.11.4"
         }
       },
       "MessagePack.Annotations": {
         "type": "Transitive",
-        "resolved": "3.1.7",
-        "contentHash": "IW1yX9viarFl/Dsio5G+pM90JkOSW4xhAiJcKxPPF5rzyp2/yCpieWju8G99QLEmaQeze2uQMEskUBA59YZmkw=="
+        "resolved": "3.1.9",
+        "contentHash": "bd+/udHmQECcfdcnlLHXR+/5Oc+UdQTEwZI5M1xw8Olymcb7SPXHleMxkkBkSLiK2+fpmY+0uAR7Jy3oiPPhKA=="
       },
       "MessagePackAnalyzer": {
         "type": "Transitive",
-        "resolved": "3.1.7",
-        "contentHash": "ZF+OOJTRS7Ogzb4gG36hPKVQk3kEbp6kkUcdRjhddDq/uSGcV4BKIdYiyJipExXyE/zsqYb0ic215O9kI+fjPA=="
+        "resolved": "3.1.9",
+        "contentHash": "/nMSlVz4p8BjlPbgxgBfE9kHyObHvmjczShWp2rGeKMH7oVEyPd0a3Fcd6yO3Xf36Jsf2ax/VvhV28Z7F5ibmQ=="
       },
       "MessagePipe": {
         "type": "Transitive",
@@ -463,7 +463,7 @@
       "lgstrayprimitives": {
         "type": "Project",
         "dependencies": {
-          "MessagePack": "[3.1.7, )",
+          "MessagePack": "[3.1.9, )",
           "MessagePipe.Interprocess": "[1.8.2, )",
           "Microsoft.Extensions.DependencyInjection": "[8.0.0, )",
           "Microsoft.Extensions.DependencyInjection.Abstractions": "[8.0.0, )",
@@ -480,7 +480,7 @@
           "Microsoft.Extensions.Configuration.Binder": "[8.0.0, )",
           "Microsoft.Extensions.Hosting": "[8.0.0, )",
           "Newtonsoft.Json": "[13.0.3, )",
-          "PowerTrayHID": "[1.5.1, )",
+          "PowerTrayHID": "[1.5.3, )",
           "System.Diagnostics.EventLog": "[8.0.0, )",
           "System.Management": "[8.0.0, )",
           "Tommy.Extensions.Configuration": "[6.2.0, )",
